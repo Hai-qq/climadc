@@ -44,7 +44,7 @@ def validate_unit_consistency(
         raise ContractError(f"invalid unit: {count} offending {_row_word(count)}")
 
     incompatible_positions: set[int] = set()
-    groups = frame.groupby(name_column, dropna=False, sort=False).indices
+    groups = frame.groupby(name_column, dropna=False, sort=False, observed=True).indices
     for positions in groups.values():
         position_list = [int(position) for position in positions]
         reference = cast(Unit, parsed_units[position_list[0]])

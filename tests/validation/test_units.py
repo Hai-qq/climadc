@@ -41,3 +41,14 @@ def test_unit_validation_accepts_compatible_dimensions_without_rewriting_labels(
     validate_unit_consistency(frame, "metric", "unit")
 
     pd.testing.assert_frame_equal(frame, original)
+
+
+def test_unit_validation_ignores_unused_categorical_groups() -> None:
+    frame = pd.DataFrame(
+        {
+            "metric": pd.Categorical(["power"], categories=["power", "unused"]),
+            "unit": ["kW"],
+        }
+    )
+
+    validate_unit_consistency(frame, "metric", "unit")

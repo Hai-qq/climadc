@@ -199,6 +199,22 @@ def test_frames_reject_non_numeric_values(wrapper: type[Any], frame_factory: Any
         wrapper.from_pandas(frame)
 
 
+@pytest.mark.parametrize(("wrapper", "frame_factory"), FRAME_CASES)
+@pytest.mark.parametrize("non_finite", [float("inf"), float("-inf")])
+def test_frames_reject_non_finite_numeric_values(
+    wrapper: type[Any], frame_factory: Any, non_finite: float
+) -> None:
+    frame = frame_factory()
+    value_column = "demand" if "demand" in frame.columns else "value"
+    frame.loc[0, value_column] = non_finite
+
+    with pytest.raises(
+        ContractError,
+        match=rf"{wrapper.__name__}: {value_column} must be finite.*1 offending row",
+    ):
+        wrapper.from_pandas(frame)
+
+
 @pytest.mark.parametrize("flexible_fraction", [-0.01, 1.01, "half", pd.NA])
 def test_workload_rejects_invalid_flexible_fraction(flexible_fraction: object) -> None:
     frame = _workload_frame()
@@ -206,6 +222,15 @@ def test_workload_rejects_invalid_flexible_fraction(flexible_fraction: object) -
     frame.loc[0, "flexible_fraction"] = flexible_fraction
 
     with pytest.raises(ContractError, match="flexible_fraction"):
+        WorkloadFrame.from_pandas(frame)
+
+
+@pytest.mark.parametrize("flexible_fraction", [float("nan"), float("inf"), float("-inf")])
+def test_workload_rejects_non_finite_flexible_fraction(flexible_fraction: float) -> None:
+    frame = _workload_frame()
+    frame.loc[0, "flexible_fraction"] = flexible_fraction
+
+    with pytest.raises(ContractError, match=r"WorkloadFrame: flexible_fraction.*1 offending row"):
         WorkloadFrame.from_pandas(frame)
 
 
@@ -272,3 +297,53 @@ def test_frame_wrapper_is_frozen_and_sorts_by_contract_key() -> None:
     assert contract.to_pandas()["valid_time"].is_monotonic_increasing
     with pytest.raises(FrozenInstanceError):
         contract._frame = frame
+
+
+def test_frame_rejects_non_scalar_timestamp_with_contract_error() -> None:
+    frame = _climate_frame()
+    frame["issue_time"] = pd.Series(
+        [["2026-01-01T00:00:00Z", "2026-01-01T01:00:00Z"]],
+        dtype=object,
+    )
+
+    with pytest.raises(
+        ContractError,
+        match=r"ClimateForecastFrame: issue_time.*timezone-aware.*1 offending row",
+    ):
+        ClimateForecastFrame.from_pandas(frame)
+
+
+def test_timestamp_error_count_is_positional_with_duplicate_input_index() -> None:
+    frame = pd.concat([_climate_frame(), _climate_frame()], ignore_index=True)
+    frame.loc[1, "valid_time"] += pd.Timedelta(hours=1)
+    frame["issue_time"] = frame["issue_time"].astype(object)
+    frame.loc[1, "issue_time"] = pd.Timestamp("2026-01-01 00:00")
+    frame.index = [7, 7]
+
+    with pytest.raises(
+        ContractError,
+        match=r"ClimateForecastFrame: issue_time.*1 offending row$",
+    ):
+        ClimateForecastFrame.from_pandas(frame)
+
+
+def test_quantile_error_count_is_positional_with_duplicate_input_index() -> None:
+    frame = pd.concat([_prediction_frame(), _prediction_frame()], ignore_index=True)
+    frame.loc[1, "valid_time"] += pd.Timedelta(hours=1)
+    frame.loc[0, "quantile"] = 0.5
+    frame.loc[1, "quantile"] = 1.0
+    frame.index = [9, 9]
+
+    with pytest.raises(
+        ContractError,
+        match=r"PredictionFrame: quantile.*1 offending row$",
+    ):
+        PredictionFrame.from_pandas(frame)
+
+
+def test_prediction_requires_issue_time_not_after_valid_time() -> None:
+    frame = _prediction_frame()
+    frame.loc[0, "issue_time"] = pd.Timestamp("2026-01-01 05:00", tz="Asia/Shanghai")
+
+    with pytest.raises(ContractError, match="issue_time <= valid_time"):
+        PredictionFrame.from_pandas(frame)

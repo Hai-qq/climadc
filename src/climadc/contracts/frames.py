@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from math import isfinite
 from numbers import Real
 
 import pandas as pd
@@ -78,13 +79,23 @@ def _is_real_number(value: object) -> bool:
     return isinstance(value, Real) and not isinstance(value, bool)
 
 
+def _is_finite_real_number(value: object) -> bool:
+    return isinstance(value, Real) and not isinstance(value, bool) and isfinite(float(value))
+
+
 def _validate_numeric(frame: pd.DataFrame, column: str, contract_name: str) -> None:
-    invalid = pd.Series(
+    non_numeric = pd.Series(
         [not _is_real_number(value) for value in frame[column]],
         index=frame.index,
         dtype=bool,
     )
-    _raise_row_error(contract_name, f"{column} must be numeric", invalid)
+    _raise_row_error(contract_name, f"{column} must be numeric", non_numeric)
+    non_finite = pd.Series(
+        [not _is_finite_real_number(value) for value in frame[column]],
+        index=frame.index,
+        dtype=bool,
+    )
+    _raise_row_error(contract_name, f"{column} must be finite", non_finite)
 
 
 def _validate_quantiles(frame: pd.DataFrame, contract_name: str) -> None:
@@ -113,7 +124,11 @@ def _normalize_timestamp_column(
 ) -> None:
     normalized: list[object] = []
     invalid = pd.Series(False, index=frame.index, dtype=bool)
-    for index, value in frame[column].items():
+    for position, value in enumerate(frame[column].tolist()):
+        if not pd.api.types.is_scalar(value):
+            normalized.append(pd.NaT)
+            invalid.iloc[position] = True
+            continue
         if pd.isna(value):
             normalized.append(pd.NaT)
             continue
@@ -124,7 +139,7 @@ def _normalize_timestamp_column(
             normalized.append(timestamp.tz_convert("UTC"))
         except (TypeError, ValueError, OverflowError):
             normalized.append(pd.NaT)
-            invalid.loc[index] = True
+            invalid.iloc[position] = True
 
     _raise_row_error(
         contract_name,
@@ -156,6 +171,7 @@ def _normalize_contract(
         )
 
     normalized: pd.DataFrame = frame.loc[:, required].copy(deep=True)
+    normalized.reset_index(drop=True, inplace=True)
     required_values = [column for column in required if column not in _NULLABLE_COLUMNS]
     for column in required_values:
         _raise_row_error(
@@ -222,7 +238,7 @@ def _validate_workload_rows(frame: pd.DataFrame, contract_name: str) -> None:
     _validate_numeric(frame, "demand", contract_name)
     invalid_fraction = pd.Series(
         [
-            not _is_real_number(value) or not 0 <= float(value) <= 1
+            not _is_finite_real_number(value) or not 0 <= float(value) <= 1
             for value in frame["flexible_fraction"]
         ],
         index=frame.index,
