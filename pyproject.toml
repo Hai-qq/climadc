@@ -1,0 +1,59 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "climadc"
+version = "0.1.0a1"
+description = "Climate-aware forecasting and benchmarking for data centers"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+dependencies = [
+  "jinja2>=3.1,<4",
+  "numpy>=1.26,<3",
+  "pandas>=2.1,<3",
+  "pint>=0.24,<1",
+  "pyarrow>=15,<24",
+  "pydantic>=2.7,<3",
+  "pyyaml>=6,<7",
+  "scikit-learn>=1.4,<2",
+  "scipy>=1.11,<2",
+  "typer>=0.12,<1",
+]
+
+[project.optional-dependencies]
+lightgbm = ["lightgbm>=4,<5"]
+xarray = ["xarray>=2024.1"]
+dev = [
+  "build>=1.2,<2",
+  "hypothesis>=6.100",
+  "mypy>=1.10",
+  "pandas-stubs>=2.1",
+  "pytest>=8,<9",
+  "pytest-cov>=5",
+  "ruff>=0.6",
+  "twine>=5,<7",
+  "types-PyYAML>=6",
+]
+docs = ["mkdocs-material>=9.5,<10"]
+
+[project.scripts]
+climadc = "climadc.cli.app:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/climadc"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+markers = ["network: requires network access", "lightgbm: requires LightGBM"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+packages = ["climadc"]
