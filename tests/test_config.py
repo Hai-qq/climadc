@@ -139,6 +139,17 @@ def test_study_config_wraps_file_errors(tmp_path: Path) -> None:
     assert isinstance(exc_info.value.__cause__, OSError)
 
 
+def test_study_config_wraps_encoding_errors(tmp_path: Path) -> None:
+    path = tmp_path / "invalid-utf8.yaml"
+    path.write_bytes(b"\xff")
+
+    with pytest.raises(ConfigurationError) as exc_info:
+        StudyConfig.from_yaml(path)
+
+    assert str(path) in str(exc_info.value)
+    assert isinstance(exc_info.value.__cause__, UnicodeDecodeError)
+
+
 def test_study_config_wraps_yaml_errors(tmp_path: Path) -> None:
     path = tmp_path / "broken.yaml"
     path.write_text("models: [", encoding="utf-8")

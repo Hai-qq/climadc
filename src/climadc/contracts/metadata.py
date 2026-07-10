@@ -62,5 +62,5 @@ class DatasetCard(BaseModel):
         try:
             raw = yaml.safe_load(path.read_text(encoding="utf-8"))
             return cls.model_validate(raw)
-        except (OSError, yaml.YAMLError, ValidationError) as exc:
+        except (OSError, UnicodeError, yaml.YAMLError, ValidationError) as exc:
             raise ConfigurationError(f"Invalid dataset card {path}: {exc}") from exc
