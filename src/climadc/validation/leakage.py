@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import TypeGuard
 
 import pandas as pd
 
 from climadc.errors import LeakageError
+
+
+def _deep_copy_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    copied: pd.DataFrame = frame.copy(deep=True)
+    for position, dtype in enumerate(frame.dtypes):
+        if pd.api.types.is_object_dtype(dtype):
+            values = [deepcopy(value) for value in frame.iloc[:, position].tolist()]
+            copied.isetitem(position, pd.Series(values, index=copied.index, dtype=object))
+    return copied
 
 
 def _is_aware_timestamp(value: object) -> TypeGuard[pd.Timestamp]:
@@ -77,8 +87,7 @@ class LeakageGuard:
         if audit.rejected_rows:
             noun = "row" if audit.rejected_rows == 1 else "rows"
             raise LeakageError(f"{audit.rejected_rows} {noun} unavailable at decision time")
-        safe_frame: pd.DataFrame = frame.copy(deep=True)
-        return safe_frame
+        return _deep_copy_frame(frame)
 
     def safe_subset(
         self,
@@ -92,4 +101,4 @@ class LeakageGuard:
             for position, available_at in enumerate(timestamps)
             if available_at.tz_convert("UTC") <= audit.decision_time
         ]
-        return frame.iloc[safe_positions].copy(deep=True), audit
+        return _deep_copy_frame(frame.iloc[safe_positions]), audit
