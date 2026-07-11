@@ -67,9 +67,13 @@ def test_artifact_writer_emits_exact_nonempty_set_and_relative_latest(tmp_path: 
     assert {item.name for item in run_path.iterdir()} == REQUIRED
     assert all(item.stat().st_size > 0 for item in run_path.iterdir())
     latest = runs / "latest"
-    assert latest.is_symlink()
-    assert os.readlink(latest) == run_path.name
     assert resolve_run_path(latest) == run_path.resolve()
+    if os.name == "nt":
+        assert not latest.is_symlink()
+        assert latest.read_text(encoding="utf-8") == f"{run_path.name}\n"
+    else:
+        assert latest.is_symlink()
+        assert os.readlink(latest) == run_path.name
 
     run_manifest = yaml.safe_load((run_path / "run.yaml").read_text(encoding="utf-8"))
     lineage = json.loads((run_path / "lineage.json").read_text(encoding="utf-8"))

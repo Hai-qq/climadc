@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import pandas as pd
 import pytest
@@ -119,7 +120,7 @@ def test_empty_column_map_accepts_only_already_canonical_input(tmp_path: Path) -
     result = read_climate(accepted, "csv", {}, "UTC")
     assert result.to_pandas().columns.tolist() == canonical.columns.tolist()
 
-    with pytest.raises(ConfigurationError, match=str(rejected)):
+    with pytest.raises(ConfigurationError, match=re.escape(str(rejected))):
         read_climate(rejected, "csv", {}, "UTC")
 
 
@@ -137,7 +138,7 @@ def test_read_local_rejects_missing_duplicate_and_colliding_mappings(
     path = tmp_path / "climate.csv"
     _climate_source().to_csv(path, index=False)
 
-    with pytest.raises(ConfigurationError, match=str(path)):
+    with pytest.raises(ConfigurationError, match=re.escape(str(path))):
         read_climate(path, "csv", column_map, "UTC")
 
 
@@ -159,7 +160,7 @@ def test_read_local_rejects_ambiguous_nonexistent_or_invalid_timezone(
     path = tmp_path / "dst.csv"
     source.to_csv(path, index=False)
 
-    with pytest.raises(ConfigurationError, match=str(path)):
+    with pytest.raises(ConfigurationError, match=re.escape(str(path))):
         read_climate(path, "csv", CLIMATE_MAP, timezone)
 
 
@@ -168,14 +169,14 @@ def test_read_local_rejects_unsupported_formats_with_path(tmp_path: Path, format
     path = tmp_path / "climate.data"
     path.write_text("not used", encoding="utf-8")
 
-    with pytest.raises(ConfigurationError, match=str(path)):
+    with pytest.raises(ConfigurationError, match=re.escape(str(path))):
         read_climate(path, format, CLIMATE_MAP, "UTC")  # type: ignore[arg-type]
 
 
 def test_read_local_wraps_file_errors_with_path(tmp_path: Path) -> None:
     path = tmp_path / "missing.csv"
 
-    with pytest.raises(ConfigurationError, match=str(path)):
+    with pytest.raises(ConfigurationError, match=re.escape(str(path))):
         read_climate(path, "csv", CLIMATE_MAP, "UTC")
 
 
@@ -195,7 +196,7 @@ def test_read_local_wraps_non_scalar_timestamp_with_path(tmp_path: Path) -> None
     path = tmp_path / "invalid-time.parquet"
     source.to_parquet(path, index=False)
 
-    with pytest.raises(ConfigurationError, match=str(path)):
+    with pytest.raises(ConfigurationError, match=re.escape(str(path))):
         read_climate(path, "parquet", CLIMATE_MAP, "UTC")
 
 

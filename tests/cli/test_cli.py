@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 import climadc.cli.app as app_module
 from climadc.cli.app import app
+from climadc.reporting import resolve_run_path
 
 
 def test_cli_init_validate_benchmark_report(tmp_path: Path) -> None:
@@ -26,7 +27,9 @@ def test_cli_init_validate_benchmark_report(tmp_path: Path) -> None:
     report = runner.invoke(app, ["report", str(project / "runs" / "latest")])
     assert report.exit_code == 0, report.output
     assert Path(report.stdout.strip()) == run_path / "report.html"
-    assert (project / "runs" / "latest" / "report.html").exists()
+    latest_run = resolve_run_path(project / "runs" / "latest")
+    assert latest_run == run_path.resolve()
+    assert (latest_run / "report.html").exists()
 
 
 def test_cli_init_is_deterministic_and_refuses_overwrite(tmp_path: Path) -> None:
