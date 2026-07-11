@@ -39,6 +39,15 @@ from climadc.validation.leakage import LeakageAudit, LeakageGuard
 _ALPHA = 0.2
 
 
+def _deep_copy_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    copied: pd.DataFrame = frame.copy(deep=True)
+    for position, dtype in enumerate(frame.dtypes):
+        if pd.api.types.is_object_dtype(dtype):
+            values = [deepcopy(value) for value in frame.iloc[:, position].tolist()]
+            copied.isetitem(position, pd.Series(values, index=frame.index, dtype=object))
+    return copied
+
+
 @dataclass(frozen=True)
 class LoadedStudyData:
     climate: ClimateForecastFrame
@@ -63,10 +72,40 @@ class RunResult:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "config_snapshot", deepcopy(self.config_snapshot))
-        object.__setattr__(self, "input_hashes", dict(self.input_hashes))
-        object.__setattr__(self, "splits", self.splits.copy(deep=True))
+        object.__setattr__(self, "input_hashes", deepcopy(self.input_hashes))
+        object.__setattr__(self, "splits", _deep_copy_frame(self.splits))
+        object.__setattr__(
+            self,
+            "predictions",
+            PredictionFrame.from_pandas(self.predictions.to_pandas()),
+        )
         object.__setattr__(self, "metrics", deepcopy(self.metrics))
-        object.__setattr__(self, "dataset_cards", tuple(self.dataset_cards))
+        object.__setattr__(
+            self,
+            "leakage_audit",
+            LeakageAudit(
+                decision_time=self.leakage_audit.decision_time,
+                accepted_rows=self.leakage_audit.accepted_rows,
+                rejected_rows=self.leakage_audit.rejected_rows,
+                violations=tuple(deepcopy(item) for item in self.leakage_audit.violations),
+            ),
+        )
+        if self.decision is not None:
+            object.__setattr__(
+                self,
+                "decision",
+                DecisionResult(
+                    schedule=_deep_copy_frame(self.decision.schedule),
+                    feasible=self.decision.feasible,
+                    violations=tuple(self.decision.violations),
+                    metrics=deepcopy(self.decision.metrics),
+                ),
+            )
+        object.__setattr__(
+            self,
+            "dataset_cards",
+            tuple(card.model_copy(deep=True) for card in self.dataset_cards),
+        )
 
 
 @dataclass(frozen=True)
@@ -75,6 +114,7 @@ class _SplitExecution:
     split: TemporalSplit
     models: dict[str, Forecaster]
     calibrators: dict[str, SplitConformalCalibrator]
+    calibration_origin: pd.Timestamp
 
 
 def _file_sha256(path: Path) -> str:
@@ -179,10 +219,60 @@ class BenchmarkRunner:
                 raise ConfigurationError("Rolling backtest produced no complete splits")
             splits = [(f"split-{position:03d}", split) for position, split in enumerate(rolling)]
 
+        horizon = pd.Timedelta(config.horizon)
+        configured_targets = {
+            self._target_for(model_config, telemetry) for model_config in config.models
+        }
+        causal_splits: list[tuple[str, TemporalSplit]] = []
+        for _, split in splits:
+            earliest_origin = times[split.calibration[0]] - horizon
+            candidates = telemetry.loc[
+                (telemetry["event_time"] <= earliest_origin)
+                & (telemetry["available_at"] <= earliest_origin)
+                & (telemetry["metric"].isin(configured_targets))
+            ]
+            legal_times = set(candidates["event_time"].tolist())
+            train = np.asarray(
+                [position for position in split.train if times[int(position)] in legal_times],
+                dtype=np.int64,
+            )
+            if len(train) < backtest.min_train:
+                if backtest.strategy == "blocked":
+                    raise ConfigurationError(
+                        "Blocked split has insufficient causal training timestamps after "
+                        f"availability trimming: {len(train)} < {backtest.min_train}"
+                    )
+                continue
+            causal_splits.append(
+                (
+                    f"split-{len(causal_splits):03d}",
+                    TemporalSplit(
+                        train=train,
+                        calibration=split.calibration.copy(),
+                        test=split.test.copy(),
+                        train_end=times[train[-1]],
+                        calibration_end=split.calibration_end,
+                        test_end=split.test_end,
+                    ),
+                )
+            )
+        if not causal_splits:
+            raise ConfigurationError(
+                "Backtest produced no split with min_train causal timestamps after "
+                "availability trimming"
+            )
+
         rows: list[dict[str, object]] = []
-        for split_id, split in splits:
-            for partition in ("train", "calibration", "test"):
-                for position in cast(np.ndarray, getattr(split, partition)):
+        for split_id, split in causal_splits:
+            partitions = {
+                "train": set(int(value) for value in split.train),
+                "calibration": set(int(value) for value in split.calibration),
+                "test": set(int(value) for value in split.test),
+            }
+            before_calibration = set(range(int(split.calibration[0])))
+            partitions["gap"] = before_calibration.difference(partitions["train"])
+            for partition in ("train", "gap", "calibration", "test"):
+                for position in sorted(partitions[partition]):
                     rows.append(
                         {
                             "split_id": split_id,
@@ -194,7 +284,7 @@ class BenchmarkRunner:
         split_table = pd.DataFrame.from_records(
             rows, columns=["split_id", "partition", "position", "timestamp"]
         )
-        return times, splits, split_table
+        return times, causal_splits, split_table
 
     @staticmethod
     def _target_for(config: ModelConfig, telemetry: pd.DataFrame) -> str:
@@ -276,25 +366,46 @@ class BenchmarkRunner:
         )
 
     @staticmethod
-    def _actuals_for(predictions: PredictionFrame, telemetry: pd.DataFrame) -> pd.Series:
+    def _actual_rows_for(
+        predictions: PredictionFrame,
+        telemetry: pd.DataFrame,
+        *,
+        available_by: pd.Timestamp | None,
+    ) -> pd.DataFrame:
         points = predictions.to_pandas()
         if points["quantile"].notna().any():
             points = cast(pd.DataFrame, points.loc[points["quantile"] == 0.5])
         observed = cast(pd.DataFrame, telemetry.loc[telemetry["quality"] == "observed"])
-        values: list[float] = []
+        rows: list[pd.Series] = []
         for row in points.itertuples(index=False):
             matches = observed.loc[
                 (observed["site_id"] == row.site_id)
                 & (observed["event_time"] == row.valid_time)
                 & (observed["metric"] == row.target)
             ]
+            if available_by is not None:
+                matches = matches.loc[matches["available_at"] <= available_by]
             if len(matches) != 1:
                 raise ConfigurationError(
                     "Expected exactly one observed target for "
-                    f"site={row.site_id!r}, target={row.target!r}, time={row.valid_time}"
+                    f"site={row.site_id!r}, target={row.target!r}, time={row.valid_time} "
+                    f"available by {available_by}"
                 )
-            values.append(float(matches.iloc[0]["value"]))
-        return pd.Series(values, dtype=float)
+            rows.append(matches.iloc[0])
+        result: pd.DataFrame = pd.DataFrame(rows).reset_index(drop=True)
+        return result
+
+    @classmethod
+    def _actuals_for(
+        cls,
+        predictions: PredictionFrame,
+        telemetry: pd.DataFrame,
+        *,
+        available_by: pd.Timestamp,
+    ) -> pd.Series:
+        rows = cls._actual_rows_for(predictions, telemetry, available_by=available_by)
+        result: pd.Series = pd.Series(rows["value"].to_numpy(dtype=float), dtype=float)
+        return result
 
     def _fit_predict_calibrate(
         self,
@@ -309,25 +420,53 @@ class BenchmarkRunner:
         executions: list[_SplitExecution] = []
         for split_id, split in splits:
             train_times = times[split.train]
-            train_rows = telemetry.loc[telemetry["event_time"].isin(train_times)]
+            calibration_targets = times[split.calibration]
+            earliest_calibration_origin = calibration_targets.min() - horizon
+            train_rows = telemetry.loc[
+                telemetry["event_time"].isin(train_times)
+                & (telemetry["event_time"] <= earliest_calibration_origin)
+                & (telemetry["available_at"] <= earliest_calibration_origin)
+            ]
             history = self._history(train_rows)
             models: dict[str, Forecaster] = {}
             calibrators: dict[str, SplitConformalCalibrator] = {}
-            calibration_targets = times[split.calibration]
             test_targets = times[split.test]
+            prepared_models: list[
+                tuple[ModelConfig, Forecaster, PredictionFrame, pd.DataFrame]
+            ] = []
             for model_config in config.models:
                 model = self._build_model(model_config, telemetry, split_id)
                 model.fit(history, context={})
                 calibration_point = model.predict(calibration_targets - horizon, horizon)
-                calibration_actuals = self._actuals_for(calibration_point, telemetry)
+                calibration_rows = self._actual_rows_for(
+                    calibration_point, telemetry, available_by=None
+                )
+                prepared_models.append((model_config, model, calibration_point, calibration_rows))
+
+            calibration_origin = max(
+                cast(pd.Timestamp, rows["available_at"].max()) for _, _, _, rows in prepared_models
+            )
+            if calibration_origin >= test_targets[0]:
+                raise ConfigurationError(
+                    "Safe calibration decision origin must be before first test target"
+                )
+            for model_config, model, calibration_point, _ in prepared_models:
+                calibration_actuals = self._actuals_for(
+                    calibration_point,
+                    telemetry,
+                    available_by=calibration_origin,
+                )
                 calibrator = SplitConformalCalibrator(alpha=_ALPHA).fit(
                     calibration_point, calibration_actuals
                 )
-                test_point = model.predict(test_targets - horizon, horizon)
-                frames.append(calibrator.transform(test_point))
+                frames.append(
+                    self._same_origin_forecast(model, calibrator, test_targets, calibration_origin)
+                )
                 models[model_config.model_id] = model
                 calibrators[model_config.model_id] = calibrator
-            executions.append(_SplitExecution(split_id, split, models, calibrators))
+            executions.append(
+                _SplitExecution(split_id, split, models, calibrators, calibration_origin)
+            )
         return _combine_prediction_frames(frames), executions
 
     def _prediction_metrics(
@@ -343,7 +482,13 @@ class BenchmarkRunner:
             median = cast(pd.DataFrame, group.loc[group["quantile"] == 0.5])
             lower = cast(pd.DataFrame, group.loc[group["quantile"] == _ALPHA / 2.0])
             upper = cast(pd.DataFrame, group.loc[group["quantile"] == 1.0 - _ALPHA / 2.0])
-            actual = self._actuals_for(PredictionFrame.from_pandas(median), telemetry)
+            prediction = PredictionFrame.from_pandas(median)
+            actual_rows = self._actual_rows_for(prediction, telemetry, available_by=None)
+            actual = self._actuals_for(
+                prediction,
+                telemetry,
+                available_by=cast(pd.Timestamp, actual_rows["available_at"].max()),
+            )
             split_metrics[str(model_id)] = {
                 "point": point_metrics(actual, median["value"].to_numpy()),
                 "probabilistic": probabilistic_metrics(
@@ -382,7 +527,7 @@ class BenchmarkRunner:
         model = execution.models[primary_config.model_id]
         calibrator = execution.calibrators[primary_config.model_id]
         targets = times[execution.split.test]
-        origin = targets[0] - pd.Timedelta(config.horizon)
+        origin = execution.calibration_origin
         calibrated = self._same_origin_forecast(model, calibrator, targets, origin)
         frame = calibrated.to_pandas()
         point_frame = cast(pd.DataFrame, frame.loc[frame["quantile"] == 0.5])
@@ -390,7 +535,13 @@ class BenchmarkRunner:
         point = PredictionFrame.from_pandas(point_frame)
         p90 = PredictionFrame.from_pandas(p90_frame)
 
-        actuals = self._actuals_for(point, data.telemetry.to_pandas())
+        telemetry = data.telemetry.to_pandas()
+        oracle_actual_rows = self._actual_rows_for(point, telemetry, available_by=None)
+        actuals = self._actuals_for(
+            point,
+            telemetry,
+            available_by=cast(pd.Timestamp, oracle_actual_rows["available_at"].max()),
+        )
         oracle_rows = point_frame.copy(deep=True)
         oracle_rows["value"] = actuals.to_numpy()
         oracle_rows["model_id"] = f"oracle--{execution.split_id}"
@@ -399,11 +550,14 @@ class BenchmarkRunner:
 
         workload_frame = data.workload.to_pandas()
         workload_rows = workload_frame.loc[
-            (workload_frame["event_time"] >= targets[0])
-            & (workload_frame["event_time"] <= targets[-1])
+            (workload_frame["available_at"] <= origin)
+            & (workload_frame["deadline"].isna() | (workload_frame["deadline"] >= targets[0]))
         ]
         if workload_rows.empty:
-            raise ConfigurationError("No workload rows overlap the final test window")
+            raise ConfigurationError("No arrived workload backlog is eligible for the test window")
+        truncated = workload_rows["deadline"].notna() & (workload_rows["deadline"] > targets[-1])
+        if bool(truncated.any()):
+            raise ConfigurationError("Workload deadline extends beyond the final test window")
         workload = WorkloadFrame.from_pandas(workload_rows)
         decision_config = config.decision
         constraints = DecisionConstraints(
@@ -436,38 +590,53 @@ class BenchmarkRunner:
         return point_result, comparison
 
     def run(self, config: StudyConfig) -> RunResult:
-        model_ids = [model.model_id for model in config.models]
+        started_at = datetime.now(timezone.utc)
+        frozen_config = config.model_copy(deep=True)
+        snapshot = _normalized_config(frozen_config)
+        config_hash = _config_sha256(snapshot)
+        input_hashes = {
+            "climate": _file_sha256(frozen_config.climate.path),
+            "telemetry": _file_sha256(frozen_config.telemetry.path),
+        }
+        if frozen_config.workload is not None:
+            input_hashes["workload"] = _file_sha256(frozen_config.workload.path)
+
+        model_ids = [model.model_id for model in frozen_config.models]
         if len(model_ids) != len(set(model_ids)):
             raise ConfigurationError("Configured model_id values must be unique")
-        data = self._load_and_validate(config)
-        if config.decision.enabled and data.workload is None:
+        data = self._load_and_validate(frozen_config)
+        final_hashes = {
+            "climate": _file_sha256(frozen_config.climate.path),
+            "telemetry": _file_sha256(frozen_config.telemetry.path),
+        }
+        if frozen_config.workload is not None:
+            final_hashes["workload"] = _file_sha256(frozen_config.workload.path)
+        if final_hashes != input_hashes:
+            raise ConfigurationError("Input files changed during benchmark entry loading")
+        if frozen_config.decision.enabled and data.workload is None:
             raise ConfigurationError("Decision evaluation is enabled but workload is required")
-        times, temporal_splits, split_table = self._make_splits(config, data)
-        predictions, executions = self._fit_predict_calibrate(config, data, times, temporal_splits)
+        times, temporal_splits, split_table = self._make_splits(frozen_config, data)
+        predictions, executions = self._fit_predict_calibrate(
+            frozen_config, data, times, temporal_splits
+        )
         final_split = executions[-1]
-        final_targets = times[final_split.split.test]
-        decision_origin = final_targets[0] - pd.Timedelta(config.horizon)
+        decision_origin = final_split.calibration_origin
         leakage_audit = LeakageGuard().audit(data.climate.to_pandas(), decision_origin)
         metrics: dict[str, object] = {
             "predictions": self._prediction_metrics(predictions, data.telemetry.to_pandas())
         }
-        decision, decision_metrics = self._decision_comparison(config, data, times, final_split)
-        if config.decision.enabled:
+        decision, decision_metrics = self._decision_comparison(
+            frozen_config, data, times, final_split
+        )
+        if frozen_config.decision.enabled:
             metrics["decision"] = decision_metrics
 
-        snapshot = _normalized_config(config)
-        input_hashes = {
-            "climate": _file_sha256(config.climate.path),
-            "telemetry": _file_sha256(config.telemetry.path),
-        }
-        if config.workload is not None:
-            input_hashes["workload"] = _file_sha256(config.workload.path)
         return RunResult(
-            study_id=config.study_id,
-            config_sha256=_config_sha256(snapshot),
+            study_id=frozen_config.study_id,
+            config_sha256=config_hash,
             config_snapshot=snapshot,
             input_hashes=input_hashes,
-            started_at=datetime.now(timezone.utc),
+            started_at=started_at,
             splits=split_table,
             predictions=predictions,
             metrics=metrics,

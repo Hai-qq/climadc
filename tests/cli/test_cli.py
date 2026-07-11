@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import yaml
+
 from typer.testing import CliRunner
 
 import climadc.cli.app as app_module
@@ -45,6 +47,19 @@ def test_cli_init_is_deterministic_and_refuses_overwrite(tmp_path: Path) -> None
     ]
     for name in managed:
         assert (first / name).read_bytes() == (second / name).read_bytes()
+
+    study = yaml.safe_load((first / "study.yaml").read_text(encoding="utf-8"))
+    assert study["backtest"] == {
+        "strategy": "blocked",
+        "min_train": 72,
+        "calibration_size": 12,
+        "test_size": 8,
+        "step": 8,
+    }
+    for card_name in ("climate-card.yaml", "telemetry-card.yaml", "workload-card.yaml"):
+        card = yaml.safe_load((first / card_name).read_text(encoding="utf-8"))
+        assert card["source"]["url"].startswith("https://github.com/Hai-qq/climadc")
+        assert "example.invalid" not in (first / card_name).read_text(encoding="utf-8")
 
     repeated = runner.invoke(app, ["init", str(first)])
     assert repeated.exit_code != 0

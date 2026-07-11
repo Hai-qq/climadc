@@ -81,7 +81,6 @@ def _write_csvs(directory: Path) -> tuple[Path, Path, Path]:
 
 def _card_payload(
     name: str,
-    filename: str,
     digest: str,
     time_start: pd.Timestamp,
     time_end: pd.Timestamp,
@@ -96,7 +95,7 @@ def _card_payload(
         },
         "source": {
             "provider": "ClimaDC project",
-            "url": f"https://example.invalid/climadc/synthetic/{filename}",
+            "url": "https://github.com/Hai-qq/climadc",
             "license": "Apache-2.0",
             "redistribution_constraints": None,
         },
@@ -157,7 +156,7 @@ def scaffold_study(directory: Path) -> Path:
         for name, data_path, card_path, time_start, time_end in inputs:
             _write_yaml(
                 card_path,
-                _card_payload(name, data_path.name, _sha256(data_path), time_start, time_end),
+                _card_payload(name, _sha256(data_path), time_start, time_end),
             )
 
         config: dict[str, object] = {
@@ -187,7 +186,7 @@ def scaffold_study(directory: Path) -> Path:
             "backtest": {
                 "strategy": "blocked",
                 "min_train": 72,
-                "calibration_size": 16,
+                "calibration_size": 12,
                 "test_size": 8,
                 "step": 8,
             },
