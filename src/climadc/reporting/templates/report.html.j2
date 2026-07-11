@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ClimaDC report — {{ study_id }}</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; }
+    body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #172033; }
+    header, section { border: 1px solid #d7dce5; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+    dl { display: grid; grid-template-columns: 12rem 1fr; gap: .5rem; }
+    dt { font-weight: 700; }
+    dd { margin: 0; overflow-wrap: anywhere; }
+    code, pre { font-family: ui-monospace, monospace; }
+    pre { overflow: auto; padding: 1rem; background: #f4f6f9; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>ClimaDC benchmark report</h1>
+    <dl>
+      <dt>Study</dt><dd>{{ study_id }}</dd>
+      <dt>Run</dt><dd>{{ run_id }}</dd>
+      <dt>Started (UTC)</dt><dd>{{ started_at }}</dd>
+      <dt>Config SHA-256</dt><dd><code>{{ config_sha256 }}</code></dd>
+    </dl>
+  </header>
+  <section>
+    <h2>Execution summary</h2>
+    <p>{{ prediction_rows }} prediction rows across {{ model_ids|length }} models and {{ split_ids|length }} splits.</p>
+    <p>Leakage audit: {{ accepted_rows }} accepted candidates, {{ rejected_rows }} rejected candidates.</p>
+    <p>Models: {{ model_ids|join(', ') }}</p>
+    <p>Splits: {{ split_ids|join(', ') }}</p>
+  </section>
+  <section>
+    <h2>Metrics</h2>
+    <pre>{{ metrics_json }}</pre>
+  </section>
+</body>
+</html>

@@ -10,8 +10,10 @@ import pandas as pd
 from climadc.contracts.frames import (
     CLIMATE_COLUMNS,
     TELEMETRY_COLUMNS,
+    WORKLOAD_COLUMNS,
     ClimateForecastFrame,
     DCTelemetryFrame,
+    WorkloadFrame,
 )
 from climadc.errors import ConfigurationError
 
@@ -161,3 +163,22 @@ def read_telemetry(
     )
     normalized = _normalize_nullable_columns(normalized, ("device_id",))
     return DCTelemetryFrame.from_pandas(normalized)
+
+
+def read_workload(
+    path: Path,
+    format: LocalFormat,
+    column_map: Mapping[str, str],
+    timezone: str,
+) -> WorkloadFrame:
+    context = str(path)
+    frame = _read(path, format)
+    renamed = _rename_columns(frame, column_map, WORKLOAD_COLUMNS, context)
+    normalized = _normalize_timestamp_columns(
+        renamed,
+        ("event_time", "available_at", "deadline"),
+        timezone,
+        context,
+    )
+    normalized = _normalize_nullable_columns(normalized, ("job_id", "deadline"))
+    return WorkloadFrame.from_pandas(normalized)

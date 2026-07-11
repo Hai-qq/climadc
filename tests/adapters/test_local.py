@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from climadc.adapters.local import read_climate, read_telemetry
+from climadc.adapters.local import read_climate, read_telemetry, read_workload
 from climadc.errors import ConfigurationError, ContractError
 
 
@@ -197,3 +197,41 @@ def test_read_local_wraps_non_scalar_timestamp_with_path(tmp_path: Path) -> None
 
     with pytest.raises(ConfigurationError, match=str(path)):
         read_climate(path, "parquet", CLIMATE_MAP, "UTC")
+
+
+def test_read_workload_reuses_local_normalization(tmp_path: Path) -> None:
+    source = pd.DataFrame(
+        {
+            "job": ["batch-1"],
+            "site": ["dc-1"],
+            "event": ["2026-01-01 08:00"],
+            "available": ["2026-01-01 08:00"],
+            "deadline_at": ["2026-01-01 10:00"],
+            "resource": ["compute"],
+            "amount": [4.0],
+            "units": ["kWh"],
+            "flex": [0.5],
+        }
+    )
+    path = tmp_path / "workload.csv"
+    source.to_csv(path, index=False)
+
+    result = read_workload(
+        path,
+        "csv",
+        {
+            "job": "job_id",
+            "site": "site_id",
+            "event": "event_time",
+            "available": "available_at",
+            "deadline_at": "deadline",
+            "resource": "resource_type",
+            "amount": "demand",
+            "units": "unit",
+            "flex": "flexible_fraction",
+        },
+        "Asia/Shanghai",
+    ).to_pandas()
+
+    assert result.loc[0, "event_time"] == pd.Timestamp("2026-01-01 00:00Z")
+    assert result.loc[0, "deadline"] == pd.Timestamp("2026-01-01 02:00Z")
