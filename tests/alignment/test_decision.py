@@ -99,6 +99,59 @@ def telemetry_frame() -> DCTelemetryFrame:
     )
 
 
+@pytest.fixture
+def categorical_decision_frames() -> tuple[ClimateForecastFrame, DCTelemetryFrame]:
+    forecast_source = _MutableHashableId("forecast-source")
+    history_device = _MutableHashableId("history-device")
+    target_device = _MutableHashableId("target-device")
+    climate = ClimateForecastFrame.from_pandas(
+        pd.DataFrame(
+            {
+                "site_id": ["dc-1"],
+                "issue_time": pd.to_datetime(["2026-01-01 22:00Z"]),
+                "available_at": pd.to_datetime(["2026-01-01 22:05Z"]),
+                "valid_time": pd.to_datetime(["2026-01-02 02:00Z"]),
+                "variable": ["air_temperature"],
+                "value": [21.0],
+                "unit": ["degC"],
+                "source": pd.Categorical(
+                    [forecast_source],
+                    categories=[forecast_source],
+                    ordered=True,
+                ),
+                "quantile": [pd.NA],
+                "member": [pd.NA],
+            }
+        )
+    )
+    telemetry = DCTelemetryFrame.from_pandas(
+        pd.DataFrame(
+            {
+                "site_id": ["dc-1", "dc-1"],
+                "device_id": pd.Categorical(
+                    [history_device, target_device],
+                    categories=[history_device, target_device],
+                    ordered=True,
+                ),
+                "event_time": pd.to_datetime(["2026-01-01 23:00Z", "2026-01-02 04:00Z"]),
+                "available_at": pd.to_datetime(["2026-01-01 23:05Z", "2026-01-02 04:05Z"]),
+                "metric": ["total_power", "total_power"],
+                "value": [100.0, 110.0],
+                "unit": ["kW", "kW"],
+                "quality": ["observed", "observed"],
+            }
+        )
+    )
+    return climate, telemetry
+
+
+def _category_with_label(series: pd.Series, label: str) -> _MutableHashableId:
+    for category in series.cat.categories:
+        if category.label == label:
+            return category
+    raise AssertionError(f"missing category {label}")
+
+
 def test_decision_view_uses_latest_available_forecast(
     climate_frame: ClimateForecastFrame,
     telemetry_frame: DCTelemetryFrame,
@@ -294,3 +347,65 @@ def test_decision_view_deeply_isolates_mutable_object_cells() -> None:
     assert source_forecast_source.payload == ["source"]
     assert source_devices["history-device"].payload == ["source"]
     assert source_devices["target-device"].payload == ["source"]
+
+
+def test_decision_view_isolates_categorical_forecast_payload(
+    categorical_decision_frames: tuple[ClimateForecastFrame, DCTelemetryFrame],
+) -> None:
+    climate, telemetry = categorical_decision_frames
+    view = DecisionViewBuilder().build(
+        climate,
+        telemetry,
+        pd.Timestamp("2026-01-02 00:00", tz="UTC"),
+        pd.Timedelta("4h"),
+    )
+
+    returned = view.forecast.iloc[0]["source"]
+    source = _category_with_label(climate.to_pandas(copy=False)["source"], "forecast-source")
+    assert view.forecast["source"].dtype == climate.to_pandas(copy=False)["source"].dtype
+    assert view.forecast["source"].cat.ordered
+    returned.payload.append("returned")
+
+    assert source.payload == ["source"]
+
+
+def test_decision_view_isolates_categorical_history_payload(
+    categorical_decision_frames: tuple[ClimateForecastFrame, DCTelemetryFrame],
+) -> None:
+    climate, telemetry = categorical_decision_frames
+    view = DecisionViewBuilder().build(
+        climate,
+        telemetry,
+        pd.Timestamp("2026-01-02 00:00", tz="UTC"),
+        pd.Timedelta("4h"),
+    )
+
+    returned = view.telemetry_history.iloc[0]["device_id"]
+    source_series = telemetry.to_pandas(copy=False)["device_id"]
+    source = _category_with_label(source_series, "history-device")
+    assert view.telemetry_history["device_id"].dtype == source_series.dtype
+    assert view.telemetry_history["device_id"].cat.ordered
+    returned.payload.append("returned")
+
+    assert source.payload == ["source"]
+
+
+def test_decision_view_isolates_categorical_observed_target_payload(
+    categorical_decision_frames: tuple[ClimateForecastFrame, DCTelemetryFrame],
+) -> None:
+    climate, telemetry = categorical_decision_frames
+    view = DecisionViewBuilder().build(
+        climate,
+        telemetry,
+        pd.Timestamp("2026-01-02 00:00", tz="UTC"),
+        pd.Timedelta("4h"),
+    )
+
+    returned = view.observed_targets.iloc[0]["device_id"]
+    source_series = telemetry.to_pandas(copy=False)["device_id"]
+    source = _category_with_label(source_series, "target-device")
+    assert view.observed_targets["device_id"].dtype == source_series.dtype
+    assert view.observed_targets["device_id"].cat.ordered
+    returned.payload.append("returned")
+
+    assert source.payload == ["source"]

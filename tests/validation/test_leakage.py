@@ -10,6 +10,18 @@ from climadc.validation.leakage import LeakageAudit, LeakageGuard
 DECISION_TIME = pd.Timestamp("2026-01-01 00:00", tz="UTC")
 
 
+class _MutableHashableCategory:
+    def __init__(self, label: str) -> None:
+        self.label = label
+        self.payload = ["source"]
+
+    def __hash__(self) -> int:
+        return hash(self.label)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _MutableHashableCategory) and self.label == other.label
+
+
 def test_guard_rejects_rows_published_after_decision() -> None:
     frame = pd.DataFrame(
         {
@@ -189,6 +201,67 @@ def test_safe_subset_recursively_copies_nested_object_payloads() -> None:
     }
     assert subset.index is not frame.index
     assert subset["payload"].dtype == frame["payload"].dtype
+
+
+def test_safe_subset_isolates_categorical_payloads_with_duplicate_axes() -> None:
+    category = _MutableHashableCategory("shared")
+    index = pd.Index(["legal", "legal"], name="sample")
+    available_at = pd.Series([DECISION_TIME, DECISION_TIME], index=index, name="available_at")
+    payload = pd.Series(
+        pd.Categorical(
+            [category, category],
+            categories=[category],
+            ordered=True,
+        ),
+        index=index,
+        name="payload",
+    )
+    frame = pd.concat([available_at, payload, payload.copy(deep=True)], axis=1)
+
+    subset, _ = LeakageGuard().safe_subset(frame, DECISION_TIME)
+
+    assert subset.index.tolist() == ["legal", "legal"]
+    assert subset.index.name == "sample"
+    assert subset.columns.tolist() == ["available_at", "payload", "payload"]
+    for position in (1, 2):
+        assert subset.dtypes.iloc[position] == frame.dtypes.iloc[position]
+        assert subset.iloc[:, position].cat.ordered
+        assert subset.iloc[:, position].cat.codes.tolist() == [0, 0]
+    subset.iloc[0, 1].payload.append("left")
+    subset.iloc[0, 2].payload.append("right")
+
+    assert frame.iloc[0, 1].payload == ["source"]
+    assert frame.iloc[0, 2].payload == ["source"]
+    assert subset.iloc[0, 1].payload == ["source", "left"]
+    assert subset.iloc[0, 2].payload == ["source", "right"]
+
+
+def test_require_safe_isolates_empty_categorical_categories() -> None:
+    category = _MutableHashableCategory("unused")
+    frame = pd.DataFrame(
+        {
+            "available_at": pd.Series([], dtype="datetime64[ns, UTC]"),
+            "payload": pd.Series(
+                pd.Categorical.from_codes(
+                    [],
+                    categories=[category],
+                    ordered=True,
+                )
+            ),
+        },
+        index=pd.Index([], name="sample"),
+    )
+
+    safe = LeakageGuard().require_safe(frame, DECISION_TIME)
+
+    assert safe.empty
+    assert safe.index.name == "sample"
+    assert safe["payload"].dtype == frame["payload"].dtype
+    assert safe["payload"].cat.ordered
+    assert safe["payload"].cat.codes.empty
+    safe["payload"].cat.categories[0].payload.append("returned")
+
+    assert frame["payload"].cat.categories[0].payload == ["source"]
 
 
 def test_empty_frame_is_safe() -> None:

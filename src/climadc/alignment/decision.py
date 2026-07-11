@@ -11,12 +11,26 @@ from climadc.validation.leakage import LeakageGuard
 _FORECAST_GROUP = ("site_id", "valid_time", "variable", "quantile", "member")
 
 
-def _deep_copy_object_cells(frame: pd.DataFrame) -> pd.DataFrame:
+def _deep_copy_frame(frame: pd.DataFrame) -> pd.DataFrame:
     copied: pd.DataFrame = frame.copy(deep=True)
     for position, dtype in enumerate(frame.dtypes):
-        if pd.api.types.is_object_dtype(dtype):
-            values = [deepcopy(value) for value in frame.iloc[:, position].tolist()]
-            copied.isetitem(position, pd.Series(values, index=copied.index, dtype=object))
+        if isinstance(dtype, pd.CategoricalDtype):
+            categorical = pd.Categorical(frame.iloc[:, position])
+            categories = pd.Index(
+                [deepcopy(value) for value in categorical.categories],
+                dtype=categorical.categories.dtype,
+                name=categorical.categories.name,
+                tupleize_cols=False,
+            )
+            categorical_values = pd.Categorical.from_codes(
+                categorical.codes.copy(),
+                categories=categories,
+                ordered=categorical.ordered,
+            )
+            copied.isetitem(position, pd.Series(categorical_values, index=copied.index))
+        elif pd.api.types.is_object_dtype(dtype):
+            object_values = [deepcopy(value) for value in frame.iloc[:, position].tolist()]
+            copied.isetitem(position, pd.Series(object_values, index=copied.index, dtype=object))
     return copied
 
 
@@ -81,7 +95,7 @@ class DecisionViewBuilder:
         ].copy(deep=True)
         telemetry_history.reset_index(drop=True, inplace=True)
 
-        observed_targets = _deep_copy_object_cells(
+        observed_targets = _deep_copy_frame(
             telemetry_data.loc[
                 (telemetry_data["event_time"] == target_time)
                 & (telemetry_data["quality"] == "observed")
