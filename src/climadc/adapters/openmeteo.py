@@ -4,9 +4,10 @@ import json
 import math
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime
 from numbers import Real
 from types import MappingProxyType
-from typing import Any, cast
+from typing import cast
 from urllib.parse import urlencode
 
 import pandas as pd
@@ -107,10 +108,13 @@ def _payload_times(hourly: Mapping[str, object]) -> list[pd.Timestamp]:
     raw_times = _payload_sequence(hourly.get("time"), "hourly.time")
     times: list[pd.Timestamp] = []
     for value in raw_times:
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigurationError(
+                "Invalid Open-Meteo hourly time: expected a non-empty ISO string"
+            )
         try:
-            timestamp = pd.Timestamp(cast(Any, value))
-            if pd.isna(timestamp):
-                raise ValueError("NaT")
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            timestamp = pd.Timestamp(parsed)
             if timestamp.tzinfo is None or timestamp.utcoffset() is None:
                 timestamp = timestamp.tz_localize("UTC")
             else:
@@ -118,6 +122,8 @@ def _payload_times(hourly: Mapping[str, object]) -> list[pd.Timestamp]:
         except (TypeError, ValueError, OverflowError) as exc:
             raise ConfigurationError(f"Invalid Open-Meteo hourly time {value!r}") from exc
         times.append(timestamp)
+    if any(current <= previous for previous, current in zip(times, times[1:])):
+        raise ConfigurationError("Open-Meteo hourly times must be unique and strictly increasing")
     return times
 
 
@@ -137,6 +143,27 @@ def _rows_from_payload(
         raise ConfigurationError("Open-Meteo payload requires hourly and hourly_units objects")
 
     times = _payload_times(hourly)
+    validated_values: dict[str, tuple[float, ...]] = {}
+    validated_units: dict[str, str] = {}
+    for variable in variables:
+        values = _payload_sequence(hourly.get(variable), f"hourly.{variable}")
+        if len(values) != len(times):
+            raise ConfigurationError("Open-Meteo hourly arrays must have equal lengths")
+        normalized_values: list[float] = []
+        for value in values:
+            if (
+                not isinstance(value, Real)
+                or isinstance(value, bool)
+                or not math.isfinite(float(value))
+            ):
+                raise ConfigurationError("Open-Meteo forecast values must be finite numbers")
+            normalized_values.append(float(value))
+        unit = units.get(variable)
+        if not isinstance(unit, str) or not unit.strip():
+            raise ConfigurationError(f"Open-Meteo hourly_units missing {variable!r}")
+        validated_values[variable] = tuple(normalized_values)
+        validated_units[variable] = unit
+
     end = issued_at + horizon
     eligible = [
         index
@@ -149,22 +176,7 @@ def _rows_from_payload(
     site_id = f"open-meteo:{latitude:.6f},{longitude:.6f}"
     rows: list[dict[str, object]] = []
     for variable in variables:
-        values = _payload_sequence(hourly.get(variable), f"hourly.{variable}")
-        if len(values) != len(times):
-            raise ConfigurationError("Open-Meteo hourly arrays must have equal lengths")
-        unit = units.get(variable)
-        if not isinstance(unit, str) or not unit.strip():
-            raise ConfigurationError(f"Open-Meteo hourly_units missing {variable!r}")
         for index in eligible:
-            value = values[index]
-            if (
-                not isinstance(value, Real)
-                or isinstance(value, bool)
-                or not math.isfinite(float(value))
-            ):
-                raise ConfigurationError(
-                    "Open-Meteo eligible forecast values must be finite numbers"
-                )
             rows.append(
                 {
                     "site_id": site_id,
@@ -172,8 +184,8 @@ def _rows_from_payload(
                     "available_at": retrieved_at,
                     "valid_time": times[index],
                     "variable": variable,
-                    "value": float(value),
-                    "unit": unit,
+                    "value": validated_values[variable][index],
+                    "unit": validated_units[variable],
                     "source": source,
                     "quantile": pd.NA,
                     "member": pd.NA,
@@ -188,8 +200,8 @@ class OpenMeteoAdapter:
         transport: Transport | None = None,
         clock: Clock | None = None,
     ) -> None:
-        self._transport = transport or _urllib_json_transport
-        self._clock = clock or (lambda: pd.Timestamp.now(tz="UTC"))
+        self._transport = transport if transport is not None else _urllib_json_transport
+        self._clock = clock if clock is not None else (lambda: pd.Timestamp.now(tz="UTC"))
         self._metadata: Mapping[str, str] = MappingProxyType({})
 
     @property

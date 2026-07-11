@@ -1,0 +1,11 @@
+{
+  "ownership": "project-owned",
+  "status": "synthetic",
+  "request_url": "https://api.open-meteo.com/v1/forecast?latitude=52.52&longitude=13.405&hourly=temperature_2m%2Crelative_humidity_2m&forecast_hours=3&timezone=UTC",
+  "fixture_date": "2026-07-11",
+  "time_range_utc": [
+    "2026-01-01T00:00",
+    "2026-01-01T03:00"
+  ],
+  "purpose": "Project-owned synthetic payload for deterministic offline adapter contract tests; it is not a captured API response."
+}

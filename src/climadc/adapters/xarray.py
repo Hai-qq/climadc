@@ -8,6 +8,8 @@ from climadc.adapters.local import _normalize_timestamp_columns, _rename_columns
 from climadc.contracts.frames import CLIMATE_COLUMNS, ClimateForecastFrame
 from climadc.errors import ConfigurationError
 
+_CLIMATE_BASE_COLUMNS = frozenset(CLIMATE_COLUMNS).difference({"source", "quantile", "member"})
+
 
 def _contains_naive_timestamp(frame: pd.DataFrame) -> bool:
     for column in ("issue_time", "available_at", "valid_time"):
@@ -41,6 +43,15 @@ def climate_from_xarray(
         raise ConfigurationError("dataset must be an xarray.Dataset")
 
     frame = dataset.to_dataframe().reset_index()
+    actual_columns = set(frame.columns)
+    if not mapping and (
+        not _CLIMATE_BASE_COLUMNS.issubset(actual_columns)
+        or not actual_columns.issubset(set(CLIMATE_COLUMNS))
+    ):
+        raise ConfigurationError(
+            "Invalid column_map for xarray dataset: an empty mapping requires canonical "
+            "climate base columns"
+        )
     renamed = _rename_columns(
         frame,
         mapping,

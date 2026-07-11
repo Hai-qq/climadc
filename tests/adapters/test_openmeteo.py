@@ -9,11 +9,13 @@ from typing import Any
 import pandas as pd
 import pytest
 
+import climadc.adapters.openmeteo as openmeteo
 from climadc.adapters.openmeteo import OpenMeteoAdapter, _urllib_json_transport
 from climadc.errors import ConfigurationError
 
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "openmeteo_response.json"
+PROVENANCE = FIXTURE.with_name("openmeteo_response.provenance.json")
 ISSUED_AT = pd.Timestamp("2026-01-01 00:00", tz="UTC")
 RETRIEVED_AT = pd.Timestamp("2026-01-01 00:30", tz="UTC")
 VARIABLES = ("temperature_2m", "relative_humidity_2m")
@@ -57,6 +59,109 @@ def test_openmeteo_fetch_uses_fixture_once_and_returns_filtered_long_frame() -> 
     assert all("Open-Meteo" in source for source in result["source"])
     assert all(expected_url in source for source in result["source"])
     assert all(RETRIEVED_AT.isoformat() in source for source in result["source"])
+
+
+def test_openmeteo_fixture_has_consistent_synthetic_provenance() -> None:
+    provenance = json.loads(PROVENANCE.read_text(encoding="utf-8"))
+    payload = _payload()
+
+    assert provenance["ownership"] == "project-owned"
+    assert provenance["status"] == "synthetic"
+    assert provenance["request_url"] == (
+        "https://api.open-meteo.com/v1/forecast?latitude=52.52&longitude=13.405"
+        "&hourly=temperature_2m%2Crelative_humidity_2m&forecast_hours=3&timezone=UTC"
+    )
+    assert provenance["fixture_date"] == "2026-07-11"
+    assert provenance["time_range_utc"] == [
+        payload["hourly"]["time"][0],
+        payload["hourly"]["time"][-1],
+    ]
+    assert "offline" in provenance["purpose"].lower()
+    assert "not a captured api response" in provenance["purpose"].lower()
+
+
+@pytest.mark.parametrize("invalid_time", [0, True, ["2026-01-01T00:00"]])
+def test_openmeteo_rejects_non_string_time_even_outside_window(invalid_time: object) -> None:
+    payload = _payload()
+    payload["hourly"]["time"][0] = invalid_time
+    adapter = OpenMeteoAdapter(transport=lambda _: payload, clock=lambda: RETRIEVED_AT)
+
+    with pytest.raises(ConfigurationError, match="hourly time"):
+        adapter.fetch(52.52, 13.405, ISSUED_AT, VARIABLES, pd.Timedelta(hours=2))
+
+
+@pytest.mark.parametrize("invalid_time", ["", "not-iso"])
+def test_openmeteo_rejects_empty_or_invalid_iso_time(invalid_time: str) -> None:
+    payload = _payload()
+    payload["hourly"]["time"][0] = invalid_time
+    adapter = OpenMeteoAdapter(transport=lambda _: payload, clock=lambda: RETRIEVED_AT)
+
+    with pytest.raises(ConfigurationError, match="hourly time"):
+        adapter.fetch(52.52, 13.405, ISSUED_AT, VARIABLES, pd.Timedelta(hours=2))
+
+
+@pytest.mark.parametrize("order", ["duplicate", "decreasing"])
+def test_openmeteo_requires_unique_strictly_increasing_times(order: str) -> None:
+    payload = _payload()
+    if order == "duplicate":
+        payload["hourly"]["time"][1] = payload["hourly"]["time"][0]
+    else:
+        payload["hourly"]["time"][1], payload["hourly"]["time"][2] = (
+            payload["hourly"]["time"][2],
+            payload["hourly"]["time"][1],
+        )
+    adapter = OpenMeteoAdapter(transport=lambda _: payload, clock=lambda: RETRIEVED_AT)
+
+    with pytest.raises(ConfigurationError, match="strictly increasing"):
+        adapter.fetch(52.52, 13.405, ISSUED_AT, VARIABLES, pd.Timedelta(hours=2))
+
+
+@pytest.mark.parametrize("invalid_value", ["1.0", True, float("nan"), float("inf")])
+def test_openmeteo_validates_values_before_filtering(invalid_value: object) -> None:
+    payload = _payload()
+    payload["hourly"]["temperature_2m"][0] = invalid_value
+    adapter = OpenMeteoAdapter(transport=lambda _: payload, clock=lambda: RETRIEVED_AT)
+
+    with pytest.raises(ConfigurationError, match="finite numbers"):
+        adapter.fetch(52.52, 13.405, ISSUED_AT, VARIABLES, pd.Timedelta(hours=2))
+
+
+def test_openmeteo_uses_falsey_injected_transport_and_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FalseyTransport:
+        calls = 0
+
+        def __bool__(self) -> bool:
+            return False
+
+        def __call__(self, url: str) -> Mapping[str, object]:
+            self.calls += 1
+            return _payload()
+
+    class FalseyClock:
+        calls = 0
+
+        def __bool__(self) -> bool:
+            return False
+
+        def __call__(self) -> pd.Timestamp:
+            self.calls += 1
+            return RETRIEVED_AT
+
+    def unexpected_default(_: str) -> Mapping[str, object]:
+        raise AssertionError("default transport selected")
+
+    monkeypatch.setattr(openmeteo, "_urllib_json_transport", unexpected_default)
+    transport = FalseyTransport()
+    clock = FalseyClock()
+    adapter = OpenMeteoAdapter(transport=transport, clock=clock)
+
+    result = adapter.fetch(52.52, 13.405, ISSUED_AT, VARIABLES, pd.Timedelta(hours=2)).to_pandas()
+
+    assert len(result) == 4
+    assert transport.calls == 1
+    assert clock.calls == 1
 
 
 def test_openmeteo_metadata_is_immutable_and_complete() -> None:

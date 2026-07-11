@@ -59,6 +59,11 @@ def test_climate_from_xarray_accepts_canonical_columns_with_empty_mapping() -> N
     assert set(result["source"]) == {"forecast-archive"}
 
 
+def test_climate_from_xarray_rejects_noncanonical_columns_with_empty_mapping() -> None:
+    with pytest.raises(ConfigurationError, match=r"column_map.*xarray dataset"):
+        climate_from_xarray(_dataset(), {}, "forecast-archive")
+
+
 def test_climate_from_xarray_requires_timezone_for_naive_times() -> None:
     with pytest.raises(ConfigurationError, match="timezone"):
         climate_from_xarray(_dataset(timezone=None), MAPPING, "fixture")

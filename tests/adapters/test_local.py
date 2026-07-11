@@ -91,6 +91,24 @@ def test_read_telemetry_renames_source_columns_and_converts_aware_times(
     assert frame.loc[0, "metric"] == "total_power"
 
 
+def test_read_telemetry_normalizes_equivalent_csv_and_parquet_with_null_device(
+    tmp_path: Path,
+) -> None:
+    source = _telemetry_source()
+    source["device"] = pd.NA
+    csv_path = tmp_path / "telemetry.csv"
+    parquet_path = tmp_path / "telemetry.parquet"
+    source.to_csv(csv_path, index=False)
+    source.to_parquet(parquet_path, index=False)
+
+    csv = read_telemetry(csv_path, "csv", TELEMETRY_MAP, "UTC").to_pandas()
+    parquet = read_telemetry(parquet_path, "parquet", TELEMETRY_MAP, "UTC").to_pandas()
+
+    pd.testing.assert_frame_equal(csv, parquet)
+    assert csv["device_id"].isna().all()
+    assert csv["device_id"].dtype == object
+
+
 def test_empty_column_map_accepts_only_already_canonical_input(tmp_path: Path) -> None:
     canonical = _climate_source().rename(columns=CLIMATE_MAP)
     accepted = tmp_path / "canonical.csv"
