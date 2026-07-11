@@ -6,6 +6,7 @@ import tarfile
 import zipfile
 
 import pytest
+import yaml
 
 from scripts.validate_release import (
     ReleaseValidationError,
@@ -89,3 +90,17 @@ def test_sdist_hatch_policy_excludes_only_internal_plans_from_public_docs() -> N
 
     assert "[tool.hatch.build.targets.sdist]" in pyproject
     assert 'exclude = ["/docs/superpowers/**"]' in pyproject
+
+
+def test_release_workflow_passes_event_data_through_step_environment() -> None:
+    workflow = yaml.safe_load(Path(".github/workflows/release.yml").read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["build"]["steps"]
+    validators = [step for step in steps if "scripts/validate_release.py" in step.get("run", "")]
+
+    assert len(validators) == 2
+    for step in validators:
+        assert step["env"]["RELEASE_TAG"] == "${{ github.event.release.tag_name }}"
+        assert '--tag "$RELEASE_TAG"' in step["run"]
+    for job in workflow["jobs"].values():
+        for step in job.get("steps", []):
+            assert "github.event." not in step.get("run", "")
