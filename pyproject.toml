@@ -50,6 +50,9 @@ Repository = "https://github.com/Hai-qq/climadc"
 [tool.hatch.build.targets.wheel]
 packages = ["src/climadc"]
 
+[tool.hatch.build.targets.sdist]
+exclude = ["/docs/superpowers/**"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--strict-markers"

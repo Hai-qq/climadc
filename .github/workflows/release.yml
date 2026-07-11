@@ -10,6 +10,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      verified: ${{ steps.release-validation.outputs.verified }}
+      package-version: ${{ steps.release-validation.outputs.package_version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -18,8 +21,19 @@ jobs:
           cache: pip
       - run: python -m pip install --upgrade pip
       - run: python -m pip install build twine
+      - name: Validate release tag
+        run: >-
+          python scripts/validate_release.py
+          --tag "${{ github.event.release.tag_name }}"
       - run: python -m build
       - run: python -m twine check dist/*
+      - name: Validate built distributions
+        id: release-validation
+        run: >-
+          python scripts/validate_release.py
+          --tag "${{ github.event.release.tag_name }}"
+          --dist dist
+          --github-output "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
           name: python-distributions
@@ -27,7 +41,10 @@ jobs:
           if-no-files-found: error
 
   publish-pypi:
-    if: github.event_name == 'release' && github.event.action == 'published'
+    if: >-
+      github.event_name == 'release' &&
+      github.event.action == 'published' &&
+      needs.build.outputs.verified == 'true'
     needs: build
     runs-on: ubuntu-latest
     environment:
