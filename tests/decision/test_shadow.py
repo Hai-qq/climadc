@@ -369,6 +369,38 @@ def test_solver_tolerance_only_cleans_near_zero_bound_noise(
     assert result.schedule["flexible_after"].tolist() == pytest.approx([5.0, 5.0], abs=1e-8)
 
 
+def test_solver_preserves_tiny_positive_flexible_allocations() -> None:
+    run_fraction = 3.8128719501279803e-10
+    demands = np.array([1.0, 26.0])
+    expected_flexible = demands * run_fraction
+    result = ShadowScheduler().solve(
+        prediction_frame([0.0, 0.0]),
+        workload_frame(
+            ["2026-01-01 01:00Z", "2026-01-01 02:00Z"],
+            demands.tolist(),
+            [1.0, 1.0],
+        ),
+        DecisionConstraints(
+            flexible_fraction=run_fraction,
+            max_shift_multiplier=1.0,
+            peak_penalty=1.0,
+            risk_penalty=0.5,
+        ),
+    )
+
+    assert result.feasible
+    assert result.violations == ()
+    flexible_after = result.schedule["flexible_after"].to_numpy(dtype=float)
+    assert (flexible_after > 0.0).all()
+    assert flexible_after == pytest.approx(expected_flexible, rel=0.0, abs=1e-15)
+    assert flexible_after.sum() == pytest.approx(expected_flexible.sum(), rel=0.0, abs=1e-15)
+    assert result.metrics["energy_conservation_error"] <= 1e-8
+    assert (
+        result.schedule["total_after"].to_numpy(dtype=float)
+        <= result.schedule["capacity"].to_numpy(dtype=float) + 1e-8
+    ).all()
+
+
 def test_linprog_numeric_value_error_returns_finite_numeric_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

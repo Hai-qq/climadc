@@ -22,6 +22,9 @@ _SCHEDULE_COLUMNS = [
     "capacity",
 ]
 _TOLERANCE = 1e-8
+# HiGHS must solve below the framework's reporting tolerance: its looser default
+# can treat legal tiny equality RHS values as zero before postconditions run.
+_HIGHS_FEASIBILITY_TOLERANCE = 1e-10
 _NUMERIC_STATUS = -2.0
 
 
@@ -442,6 +445,10 @@ class ShadowScheduler:
                 b_eq=prepared.flexible_energy,
                 bounds=bounds,
                 method="highs",
+                options={
+                    "primal_feasibility_tolerance": _HIGHS_FEASIBILITY_TOLERANCE,
+                    "dual_feasibility_tolerance": _HIGHS_FEASIBILITY_TOLERANCE,
+                },
             )
         except (FloatingPointError, OverflowError, ValueError) as exc:
             return _numeric_infeasible(f"linprog rejected finite LP arithmetic: {exc}", prepared)
@@ -472,14 +479,17 @@ class ShadowScheduler:
             return invalid_solution("solution must contain only finite values")
 
         solution = solution.copy()
-        # HiGHS may return bound noise around zero. Only values within the shared
-        # 1e-8 feasibility tolerance are cleaned; larger violations are rejected.
-        solution[np.abs(solution) <= _TOLERANCE] = 0.0
+        # Reporting tolerance only cleans bound noise; legal positive eligible
+        # allocations remain data, even when they are smaller than _TOLERANCE.
+        negative_noise = (solution < 0.0) & (solution >= -_TOLERANCE)
+        solution[negative_noise] = 0.0
         if (solution < 0.0).any():
             return invalid_solution("allocations and peak must be nonnegative")
 
         allocations = solution[:allocation_count].reshape(row_count, slot_count)
         peak = float(solution[peak_index])
+        ineligible_noise = (~prepared.eligible) & (allocations > 0.0) & (allocations <= _TOLERANCE)
+        allocations[ineligible_noise] = 0.0
         if (allocations[~prepared.eligible] > 0.0).any():
             return invalid_solution("ineligible allocation violates a zero bound")
 
