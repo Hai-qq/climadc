@@ -1,0 +1,62 @@
+name: Bug report
+description: Report a reproducible ClimaDC defect
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug. For vulnerabilities, use GitHub Security Advisories instead of this public form.
+  - type: input
+    id: version
+    attributes:
+      label: ClimaDC version
+      placeholder: 0.1.0a1
+    validations:
+      required: true
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: Operating system
+      options:
+        - Ubuntu/Linux
+        - macOS
+        - Windows
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: 3.13.5
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include commands and synthetic or redistributable inputs only. Remove credentials and private data.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and logs
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety checks
+      options:
+        - label: I removed credentials, tokens, private endpoints, and non-redistributable data.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

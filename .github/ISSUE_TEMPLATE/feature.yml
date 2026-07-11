@@ -1,0 +1,40 @@
+name: Feature request
+description: Propose a scoped contract, adapter, benchmark, or research workflow improvement
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Research or developer problem
+      description: Describe the concrete workflow that is difficult today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed contribution
+      description: Explain inputs, outputs, causality constraints, and how success can be tested.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Existing projects and alternatives
+      description: Identify upstream tools that already cover part of the problem and why a ClimaDC connection layer is still needed.
+    validations:
+      required: true
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: Non-goals
+      description: State what this proposal intentionally will not build.
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope confirmation
+      options:
+        - label: The proposal does not require ClimaDC to become an online controller, model zoo, telemetry collector, or full simulator.
+          required: true

@@ -9,6 +9,7 @@ description = "Climate-aware forecasting and benchmarking for data centers"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
+authors = [{name = "Hai-qq"}]
 dependencies = [
   "jinja2>=3.1,<4",
   "numpy>=1.26,<3",
@@ -40,6 +41,11 @@ docs = ["mkdocs-material>=9.5,<10"]
 
 [project.scripts]
 climadc = "climadc.cli.app:main"
+
+[project.urls]
+Documentation = "https://hai-qq.github.io/climadc/"
+Issues = "https://github.com/Hai-qq/climadc/issues"
+Repository = "https://github.com/Hai-qq/climadc"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/climadc"]

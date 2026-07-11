@@ -12,6 +12,7 @@ dist/
 *.egg-info/
 .coverage
 htmlcov/
+site/
 runs/
 .cache/
 data/raw/
