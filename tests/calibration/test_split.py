@@ -7,7 +7,7 @@ import pytest
 from pandas.testing import assert_frame_equal
 
 from climadc.calibration import Calibrator, SplitConformalCalibrator
-from climadc.contracts.frames import PREDICTION_COLUMNS, PredictionFrame
+from climadc.contracts.frames import PREDICTION_COLUMNS, PREDICTION_KEY, PredictionFrame
 from climadc.errors import ConfigurationError, LeakageError
 
 
@@ -45,6 +45,12 @@ def _predictions(
         columns=PREDICTION_COLUMNS,
     )
     return PredictionFrame.from_pandas(frame)
+
+
+def _prediction_frame(records: list[dict[str, object]]) -> PredictionFrame:
+    return PredictionFrame.from_pandas(
+        pd.DataFrame.from_records(records, columns=PREDICTION_COLUMNS)
+    )
 
 
 class _UserCalibrator:
@@ -87,6 +93,43 @@ def test_point_calibration_uses_finite_sample_higher_quantile() -> None:
     assert result["value"].tolist() == [7.0, 10.0, 13.0]
 
 
+def test_actuals_follow_canonical_first_occurrence_group_order() -> None:
+    issue = pd.Timestamp("2026-01-01 00:00Z")
+    calibration = _prediction_frame(
+        [
+            {
+                "site_id": "dc-1",
+                "issue_time": issue,
+                "valid_time": issue + pd.Timedelta("3h"),
+                "target": "power",
+                "value": 0.0,
+                "unit": "kW",
+                "model_id": "model-a",
+                "quantile": pd.NA,
+            },
+            {
+                "site_id": "dc-1",
+                "issue_time": issue,
+                "valid_time": issue + pd.Timedelta("1h"),
+                "target": "power",
+                "value": 100.0,
+                "unit": "kW",
+                "model_id": "model-b",
+                "quantile": pd.NA,
+            },
+        ]
+    )
+    assert calibration.to_pandas()["model_id"].tolist() == ["model-a", "model-b"]
+
+    calibrator = SplitConformalCalibrator(alpha=0.5).fit(
+        calibration,
+        # RangeIndex positions correspond exactly to first occurrence in the normalized frame.
+        pd.Series([0.0, 100.0]),
+    )
+
+    assert calibrator.adjustment_ == 0.0
+
+
 def test_point_quantile_half_is_accepted_and_emits_three_rows() -> None:
     calibrator = SplitConformalCalibrator(alpha=0.2).fit(
         _predictions([10.0, 12.0], quantiles=[0.5, 0.5]),
@@ -120,6 +163,44 @@ def test_interval_calibration_sorts_inverted_endpoints_and_preserves_median() ->
     assert result["value"].tolist() == [9.0, 14.0, 17.0]
     assert result["model_id"].tolist() == ["interval-model"] * 3
     assert result["unit"].tolist() == ["kW"] * 3
+
+
+def test_nonnegative_adjustment_never_crosses_transformed_quantiles() -> None:
+    calibrator = SplitConformalCalibrator(alpha=0.2).fit(
+        _predictions([0.0, 1.0, 2.0], quantiles=[0.1, 0.5, 0.9]),
+        pd.Series([1.0]),
+    )
+
+    result = calibrator.transform(
+        _predictions(
+            [0.0, 0.25, 0.5],
+            quantiles=[0.1, 0.5, 0.9],
+            start="2026-02-01 00:00Z",
+        )
+    ).to_pandas()
+
+    assert calibrator.adjustment_ == 0.0
+    assert result["value"].tolist() == [0.0, 0.25, 0.5]
+    assert result["value"].is_monotonic_increasing
+
+
+def test_fit_rejects_interval_median_outside_sorted_endpoints() -> None:
+    interval = _predictions([2.0, 3.0, 0.0], quantiles=[0.1, 0.5, 0.9])
+
+    with pytest.raises(ConfigurationError, match="median.*sorted lower/upper"):
+        SplitConformalCalibrator(alpha=0.2).fit(interval, pd.Series([1.0]))
+
+
+def test_transform_rejects_interval_median_outside_sorted_endpoints() -> None:
+    calibrator = SplitConformalCalibrator(alpha=0.2).fit(_predictions([1.0]), pd.Series([1.0]))
+    interval = _predictions(
+        [2.0, 3.0, 0.0],
+        quantiles=[0.1, 0.5, 0.9],
+        start="2026-02-01 00:00Z",
+    )
+
+    with pytest.raises(ConfigurationError, match="median.*sorted lower/upper"):
+        calibrator.transform(interval)
 
 
 def test_fit_and_transform_do_not_mutate_caller_inputs() -> None:
@@ -204,4 +285,54 @@ def test_interval_actuals_align_to_groups_not_rows() -> None:
         pd.Series([1.0]),
     )
 
-    assert calibrator.adjustment_ == -1.0
+    # A conformal expansion cannot shrink an interval when the observation is already covered.
+    assert calibrator.adjustment_ == 0.0
+
+
+def test_duplicate_null_and_median_point_rows_are_rejected() -> None:
+    issue = pd.Timestamp("2026-01-01 00:00Z")
+    duplicate_point = _prediction_frame(
+        [
+            {
+                "site_id": "dc-1",
+                "issue_time": issue,
+                "valid_time": issue + pd.Timedelta("1h"),
+                "target": "power",
+                "value": 1.0,
+                "unit": "kW",
+                "model_id": "model-a",
+                "quantile": pd.NA,
+            },
+            {
+                "site_id": "dc-1",
+                "issue_time": issue,
+                "valid_time": issue + pd.Timedelta("1h"),
+                "target": "power",
+                "value": 1.0,
+                "unit": "kW",
+                "model_id": "model-a",
+                "quantile": 0.5,
+            },
+        ]
+    )
+
+    with pytest.raises(ConfigurationError, match="one point row"):
+        SplitConformalCalibrator(alpha=0.2).fit(duplicate_point, pd.Series([1.0]))
+
+
+def test_interval_quantile_levels_require_exact_match() -> None:
+    near_match = _predictions([0.0, 1.0, 2.0], quantiles=[0.1000000001, 0.5, 0.9])
+
+    with pytest.raises(ConfigurationError, match="exactly"):
+        SplitConformalCalibrator(alpha=0.2).fit(near_match, pd.Series([1.0]))
+
+
+def test_transform_preserves_all_base_metadata_and_unique_prediction_keys() -> None:
+    calibrator = SplitConformalCalibrator(alpha=0.2).fit(_predictions([9.0]), pd.Series([10.0]))
+    source = _predictions([20.0], start="2026-02-01 00:00Z", model_id="metadata-model").to_pandas()
+
+    result = calibrator.transform(PredictionFrame.from_pandas(source)).to_pandas()
+
+    for column in ("site_id", "issue_time", "valid_time", "target", "unit", "model_id"):
+        assert result[column].tolist() == [source.loc[0, column]] * 3
+    assert not result.duplicated(subset=list(PREDICTION_KEY)).any()

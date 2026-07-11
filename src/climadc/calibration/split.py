@@ -40,7 +40,7 @@ def _prediction_groups(predictions: PredictionFrame, alpha: float) -> list[_Pred
     layouts: set[str] = set()
     expected = (alpha / 2.0, 0.5, 1.0 - alpha / 2.0)
 
-    for _, group in frame.groupby(list(_BASE_KEY), sort=True, dropna=False, observed=True):
+    for _, group in frame.groupby(list(_BASE_KEY), sort=False, dropna=False, observed=True):
         quantiles = group["quantile"]
         if len(group) == 1 and (pd.isna(quantiles.iloc[0]) or quantiles.iloc[0] == 0.5):
             value = float(group["value"].iloc[0])
@@ -58,6 +58,10 @@ def _prediction_groups(predictions: PredictionFrame, alpha: float) -> list[_Pred
             )
 
         raw_lower, raw_upper = sorted((lower, upper))
+        if layout == "interval" and not raw_lower <= median <= raw_upper:
+            raise ConfigurationError(
+                "Interval median must lie within the sorted lower/upper endpoints"
+            )
         first = group.iloc[0]
         metadata = {column: first[column] for column in _BASE_KEY}
         groups.append(
@@ -84,7 +88,10 @@ def _actual_array(actuals: pd.Series, expected_length: int) -> np.ndarray:
     if len(actuals) != expected_length:
         raise ConfigurationError("actuals length must exactly match prediction groups")
     if not actuals.index.equals(pd.RangeIndex(expected_length)):
-        raise ConfigurationError("actuals index must exactly align with prediction group order")
+        raise ConfigurationError(
+            "actuals RangeIndex must exactly align with prediction groups in normalized "
+            "first-occurrence order"
+        )
 
     values: list[float] = []
     for value in actuals.tolist():
@@ -116,6 +123,8 @@ class SplitConformalCalibrator:
         calibration_predictions: PredictionFrame,
         actuals: pd.Series,
     ) -> SplitConformalCalibrator:
+        """Fit using actuals in normalized PredictionFrame first-occurrence group order."""
+
         groups = _prediction_groups(calibration_predictions, self.alpha)
         observed = _actual_array(actuals, len(groups))
         if groups[0].layout == "point":
@@ -123,7 +132,7 @@ class SplitConformalCalibrator:
         else:
             lower = np.asarray([group.lower for group in groups])
             upper = np.asarray([group.upper for group in groups])
-            scores = np.maximum(lower - observed, observed - upper)
+            scores = np.maximum(np.maximum(lower - observed, observed - upper), 0.0)
 
         adjustment = _finite_sample_adjustment(scores, self.alpha)
         valid_times = frozenset(
