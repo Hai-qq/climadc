@@ -84,6 +84,7 @@ class StudyConfig(BaseModel):
     backtest: BacktestConfig
     models: list[ModelConfig] = Field(min_length=1)
     decision: DecisionConfig = Field(default_factory=DecisionConfig)
+    extensions: dict[str, object] = Field(default_factory=dict)
     output_dir: Path = Path("runs")
 
     @field_validator("horizon")

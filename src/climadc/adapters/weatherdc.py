@@ -183,6 +183,21 @@ def _regular_file(path: Path) -> bool:
         return False
 
 
+def _remove_cache_entry(path: Path) -> None:
+    try:
+        status = os.lstat(path)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise ConfigurationError(f"Unable to inspect WeatherDC cache entry {path}") from exc
+    if not stat.S_ISREG(status.st_mode) and not stat.S_ISLNK(status.st_mode):
+        raise ConfigurationError(f"WeatherDC cache entry must be a regular file or symlink: {path}")
+    try:
+        path.unlink()
+    except OSError as exc:
+        raise ConfigurationError(f"Unable to remove WeatherDC cache entry {path}") from exc
+
+
 def _file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -348,13 +363,12 @@ class WeatherDCAdapter:
             if _verified(destination, item):
                 records.append(DownloadRecord(item.name, destination, item.sha256, item.bytes))
                 continue
-            if destination.exists() or destination.is_symlink():
-                destination.unlink()
+            _remove_cache_entry(destination)
+            _remove_cache_entry(part)
             last_error: Exception | None = None
             for attempt in range(_RETRIES):
                 try:
-                    if part.exists() or part.is_symlink():
-                        part.unlink()
+                    _remove_cache_entry(part)
                     self._downloader(item.url, part)
                     if not _verified(part, item):
                         raise ConfigurationError(
@@ -365,8 +379,11 @@ class WeatherDCAdapter:
                     break
                 except Exception as exc:  # downloader implementations define their own errors
                     last_error = exc
-                    if part.exists() or part.is_symlink():
-                        part.unlink()
+                    try:
+                        _remove_cache_entry(part)
+                    except ConfigurationError as cleanup_error:
+                        last_error = cleanup_error
+                        break
                     if attempt + 1 < _RETRIES:
                         self._sleeper(float(2**attempt))
             if last_error is not None:

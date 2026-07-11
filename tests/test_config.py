@@ -108,6 +108,28 @@ def test_study_config_preserves_absolute_paths(tmp_path: Path) -> None:
     assert cfg.climate.path == absolute_data
 
 
+def test_study_config_preserves_structured_extensions(tmp_path: Path) -> None:
+    path = tmp_path / "study.yaml"
+    path.write_text(
+        _study_yaml()
+        + """extensions:
+  weatherdc_reference:
+    algorithm: ordinary_least_squares
+    features: [temp, humid, solar]
+""",
+        encoding="utf-8",
+    )
+
+    cfg = StudyConfig.from_yaml(path)
+
+    assert cfg.extensions == {
+        "weatherdc_reference": {
+            "algorithm": "ordinary_least_squares",
+            "features": ["temp", "humid", "solar"],
+        }
+    }
+
+
 @pytest.mark.parametrize("horizon", ["0h", "-1h", "not-a-duration"])
 def test_study_config_rejects_invalid_horizon(tmp_path: Path, horizon: str) -> None:
     path = tmp_path / "study.yaml"

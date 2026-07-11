@@ -3,18 +3,30 @@ from __future__ import annotations
 import argparse
 import hashlib
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
+from typing import Protocol, cast
 
 import numpy as np
 import pandas as pd
 import yaml
 
-from climadc.adapters.weatherdc import WEATHERDC_SOURCE_MANIFEST, WeatherDCAdapter
+from climadc.adapters.weatherdc import (
+    WEATHERDC_SOURCE_MANIFEST,
+    DownloadManifest,
+    SourceManifest,
+    WeatherDCAdapter,
+)
 from climadc.benchmark import BenchmarkRunner, RunResult
 from climadc.config import InputConfig, StudyConfig
-from climadc.contracts.frames import PREDICTION_COLUMNS, PredictionFrame
+from climadc.contracts.frames import (
+    PREDICTION_COLUMNS,
+    ClimateForecastFrame,
+    DCTelemetryFrame,
+    PredictionFrame,
+)
+from climadc.errors import ConfigurationError
 from climadc.evaluation import point_metrics
 from climadc.reporting import ArtifactWriter
 
@@ -148,6 +160,22 @@ def _last_available_value(rows: pd.DataFrame, origin: pd.Timestamp) -> float:
     return float(legal.iloc[-1]["value"])
 
 
+def _complete_alignment(
+    label: str,
+    requested: pd.DatetimeIndex,
+    features: pd.DataFrame,
+    targets: pd.Series,
+) -> pd.DatetimeIndex:
+    missing_features = requested.difference(features.index)
+    missing_targets = requested.difference(targets.index)
+    if requested.empty or not missing_features.empty or not missing_targets.empty:
+        raise ValueError(
+            f"Incomplete {label} alignment: requested={len(requested)}, "
+            f"missing_features={len(missing_features)}, missing_targets={len(missing_targets)}"
+        )
+    return requested
+
+
 def _reference_predictions(
     result: RunResult,
     climate: pd.DataFrame,
@@ -172,14 +200,18 @@ def _reference_predictions(
             (telemetry["metric"] == "cooling_power") & (telemetry["quality"] == "observed")
         ],
     )
-    targets = cast(pd.Series, target_rows.set_index("event_time")["value"])
-    train_index = train_times.intersection(features.index).intersection(targets.index)
-    test_index = test_times.intersection(features.index).intersection(targets.index)
+    causal_targets = cast(
+        pd.Series,
+        target_rows.loc[target_rows["available_at"] <= origin].set_index("event_time")["value"],
+    )
+    actual_targets = cast(pd.Series, target_rows.set_index("event_time")["value"])
+    train_index = _complete_alignment("causal training", train_times, features, causal_targets)
+    test_index = _complete_alignment("post-hoc test", test_times, features, actual_targets)
     train_x = np.column_stack(
         [np.ones(len(train_index)), features.loc[train_index, ["temp", "humid", "solar"]]]
     )
     coefficients, _, _, _ = np.linalg.lstsq(
-        train_x, targets.loc[train_index].to_numpy(dtype=float), rcond=None
+        train_x, causal_targets.loc[train_index].to_numpy(dtype=float), rcond=None
     )
     test_x = np.column_stack(
         [np.ones(len(test_index)), features.loc[test_index, ["temp", "humid", "solar"]]]
@@ -206,7 +238,7 @@ def _reference_predictions(
                 }
             )
     predictions = PredictionFrame.from_pandas(pd.DataFrame(rows, columns=PREDICTION_COLUMNS))
-    actual = targets.loc[test_index].to_numpy(dtype=float)
+    actual = actual_targets.loc[test_index].to_numpy(dtype=float)
     metrics = {
         "weatherdc": point_metrics(actual, weatherdc_values),
         "persistence": point_metrics(actual, persistence_values),
@@ -233,32 +265,94 @@ def run_small(output_dir: Path) -> tuple[RunResult, Path]:
     split_metrics = cast(dict[str, object], prediction_metrics["split-000"])
     split_metrics["weatherdc--split-000"] = {"point": reference_metrics["weatherdc"]}
     split_metrics["weatherdc-persistence--split-000"] = {"point": reference_metrics["persistence"]}
-    result = replace(base, predictions=combined, metrics=metrics)
+    input_hashes = dict(base.input_hashes)
+    input_hashes["weatherdc_reference_implementation"] = _sha256(Path(__file__))
+    result = replace(
+        base,
+        predictions=combined,
+        metrics=metrics,
+        input_hashes=input_hashes,
+    )
     run_dir = ArtifactWriter().write(result, output_dir)
     return result, run_dir
 
 
-def prepare_full(cache_dir: Path) -> tuple[Path, float]:
-    """Download verified upstream files and convert them; no model training is implied."""
+class _ConversionAdapter(Protocol):
+    def download(self, cache_dir: Path, manifest: SourceManifest) -> DownloadManifest: ...
 
-    started = time.monotonic()
+    def load(self, cache_dir: Path) -> tuple[ClimateForecastFrame, DCTelemetryFrame]: ...
+
+
+def _observation_rows(climate: ClimateForecastFrame) -> pd.DataFrame:
+    rows = climate.to_pandas()
+    observation_times = (rows["issue_time"] == rows["available_at"]) & (
+        rows["available_at"] == rows["valid_time"]
+    )
+    if not bool(observation_times.all()) or set(rows["source"]) != {"weatherdc:hii-observation"}:
+        raise ConfigurationError(
+            "Full conversion requires observation-only climate rows with "
+            "issue_time = available_at = valid_time"
+        )
+    return rows
+
+
+def prepare_conversion(
+    cache_dir: Path,
+    *,
+    adapter: _ConversionAdapter | None = None,
+    manifest: SourceManifest = WEATHERDC_SOURCE_MANIFEST,
+    clock: Callable[[], float] = time.monotonic,
+) -> tuple[Path, float]:
+    """Download and convert verified observations without creating a benchmark."""
+
+    started = clock()
     cache_dir = Path(cache_dir).resolve()
     raw_dir = cache_dir / "raw"
     study_dir = cache_dir / "study"
-    WeatherDCAdapter().download(raw_dir, WEATHERDC_SOURCE_MANIFEST)
-    climate, telemetry = WeatherDCAdapter().load(raw_dir)
+    active_adapter = adapter if adapter is not None else WeatherDCAdapter()
+    active_adapter.download(raw_dir, manifest)
+    climate, telemetry = active_adapter.load(raw_dir)
+    climate_rows = _observation_rows(climate)
     study_dir.mkdir(parents=True, exist_ok=True)
-    climate.to_pandas().to_csv(study_dir / "climate.csv", index=False, lineterminator="\n")
-    telemetry.to_pandas().to_csv(study_dir / "telemetry.csv", index=False, lineterminator="\n")
-    return study_dir, time.monotonic() - started
+    climate_path = study_dir / "climate.csv"
+    telemetry_path = study_dir / "telemetry.csv"
+    climate_rows.to_csv(climate_path, index=False, lineterminator="\n")
+    telemetry.to_pandas().to_csv(telemetry_path, index=False, lineterminator="\n")
+    elapsed = clock() - started
+    conversion_manifest: dict[str, object] = {
+        "mode": "conversion_only",
+        "elapsed_seconds": float(elapsed),
+        "benchmark_produced": False,
+        "workload_produced": False,
+        "observation_time_semantics": "issue_time = available_at = valid_time",
+        "sources": [
+            {
+                "name": item.name,
+                "url": item.url,
+                "bytes": item.bytes,
+                "sha256": item.sha256,
+            }
+            for item in manifest.items
+        ],
+        "outputs": {
+            climate_path.name: _sha256(climate_path),
+            telemetry_path.name: _sha256(telemetry_path),
+        },
+    }
+    _write_yaml(study_dir / "conversion-manifest.yaml", conversion_manifest)
+    return study_dir, elapsed
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run or prepare the WeatherDC reference study")
+    parser = argparse.ArgumentParser(description="Run small mode or convert WeatherDC observations")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--small", action="store_true", help="run the offline CC0 fixture")
-    mode.add_argument("--full", action="store_true", help="download and convert upstream data")
-    parser.add_argument("--output-dir", type=Path, default=ROOT / "runs" / "weatherdc")
+    mode.add_argument(
+        "--full",
+        action="store_true",
+        help="verified upstream conversion only; produces no benchmark or workload",
+    )
+    parser.add_argument("--output-dir", type=Path, default=ROOT / "runs" / "weatherdc-small")
     parser.add_argument("--cache-dir", type=Path, default=ROOT / ".cache" / "climadc" / "weatherdc")
     return parser
 
@@ -269,7 +363,7 @@ def main() -> None:
         _, run_dir = run_small(args.output_dir)
         print(run_dir)
         return
-    study_dir, elapsed = prepare_full(args.cache_dir)
+    study_dir, elapsed = prepare_conversion(args.cache_dir)
     print(f"Converted upstream observations to {study_dir}")
     print(f"Download and conversion runtime: {elapsed:.1f} seconds")
     print(

@@ -1,22 +1,22 @@
-study_id: weatherdc-kasetsart-reference
+study_id: weatherdc-kasetsart-small-reference
 horizon: 4h
 climate:
-  path: ../.cache/climadc/weatherdc/study/climate.csv
+  path: ../.cache/climadc/weatherdc-small/climate.csv
   format: csv
   timezone: UTC
-  card: ../.cache/climadc/weatherdc/study/climate-card.yaml
+  card: ../.cache/climadc/weatherdc-small/climate-card.yaml
   column_map: {}
 telemetry:
-  path: ../.cache/climadc/weatherdc/study/telemetry.csv
+  path: ../.cache/climadc/weatherdc-small/telemetry.csv
   format: csv
   timezone: UTC
-  card: ../.cache/climadc/weatherdc/study/telemetry-card.yaml
+  card: ../.cache/climadc/weatherdc-small/telemetry-card.yaml
   column_map: {}
 workload:
-  path: ../.cache/climadc/weatherdc/study/workload.csv
+  path: ../.cache/climadc/weatherdc-small/workload.csv
   format: csv
   timezone: UTC
-  card: ../.cache/climadc/weatherdc/study/workload-card.yaml
+  card: ../.cache/climadc/weatherdc-small/workload-card.yaml
   column_map: {}
 backtest:
   strategy: blocked
@@ -45,4 +45,18 @@ decision:
   max_shift_multiplier: 2.0
   peak_penalty: 4.0
   risk_penalty: 0.25
-output_dir: ../runs/weatherdc
+extensions:
+  weatherdc_reference:
+    scope: offline_small_fixture_only
+    target: cooling_power
+    model_id: weatherdc
+    algorithm: ordinary_least_squares
+    features: [temp, humid, solar]
+    implementation: examples/weatherdc_kasetsart/run.py
+    training_boundary: available_at <= common_origin
+    test_actuals_boundary: post-hoc evaluation only
+    persistence:
+      model_id: weatherdc-persistence
+      algorithm: last_observation
+      boundary: event_time <= common_origin and available_at <= common_origin
+output_dir: ../runs/weatherdc-small

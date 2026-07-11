@@ -6,7 +6,11 @@ HII weather variables into canonical contracts, then runs an auditable forecast-
 
 ## Offline small mode
 
-From the repository root:
+From a fresh checkout, install the package first and then run the example from the repository root:
+
+```bash
+python -m pip install -e .
+```
 
 ```bash
 python examples/weatherdc_kasetsart/run.py --small
@@ -28,17 +32,24 @@ The synthetic forecast batch has an explicit issue/availability time before the 
 is why the small reference can require zero rejected climate rows. This availability convention is
 specific to the synthetic fixture and is not backfilled onto HII observations.
 
-## Verified upstream conversion
+`benchmarks/weatherdc.yaml` is exclusively the small-mode benchmark template. Its generated input
+paths are replaced by `run.py`; it is not a configuration for the upstream conversion.
+
+## Verified upstream conversion only
 
 ```bash
 python examples/weatherdc_kasetsart/run.py --full
 ```
 
-Full mode downloads the ten immutable sources listed in `data-card.md` to
+`--full` is explicitly conversion-only. It downloads the ten immutable sources listed in
+`data-card.md` to
 `.cache/climadc/weatherdc/raw`. Every file is checked against both its byte count and SHA-256 before
 an atomic rename. Existing cache files are reused only after the same checks. The command then
-writes canonical climate and telemetry CSVs under `.cache/climadc/weatherdc/study` and prints the
-measured download-plus-conversion runtime for that machine and network.
+writes canonical climate and telemetry CSVs under `.cache/climadc/weatherdc/study`. It does not
+create or infer workload data and does not run a benchmark. The generated
+`conversion-manifest.yaml` records the measured download-plus-conversion runtime, exact source
+URLs/hashes, output hashes, observation timing semantics, and the absence of benchmark/workload
+outputs.
 
 Full mode is intentionally a download/conversion entrypoint, not a claim that observed HII weather
 is a forecast. Because the HII CSVs contain observations without issue or retrieval timestamps,
