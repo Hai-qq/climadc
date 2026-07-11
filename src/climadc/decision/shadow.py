@@ -22,6 +22,11 @@ _SCHEDULE_COLUMNS = [
     "capacity",
 ]
 _TOLERANCE = 1e-8
+_NUMERIC_STATUS = -2.0
+
+
+class _NumericError(Exception):
+    pass
 
 
 @dataclass(frozen=True)
@@ -51,20 +56,44 @@ def _require_exact_utc(frame: pd.DataFrame, columns: tuple[str, ...], label: str
             raise ContractError(f"{label}: {column} must use exact UTC timestamps")
 
 
+def _require_finite(label: str, *arrays: np.ndarray) -> None:
+    if any(not np.isfinite(array).all() for array in arrays):
+        raise _NumericError(f"{label} produced a non-finite value")
+
+
 def _normalized_risk(values: np.ndarray) -> np.ndarray:
-    minimum = float(np.min(values))
-    spread = float(np.max(values) - minimum)
-    if spread == 0.0:
+    scale = max(abs(float(np.min(values))), abs(float(np.max(values))))
+    if scale == 0.0:
         return np.zeros_like(values, dtype=float)
-    return (values - minimum) / spread
+    try:
+        with np.errstate(over="raise", invalid="raise", divide="raise"):
+            scaled = np.divide(values, scale)
+            minimum = float(np.min(scaled))
+            spread = float(np.subtract(np.max(scaled), minimum))
+            if spread == 0.0:
+                return np.zeros_like(values, dtype=float)
+            risk: np.ndarray = np.asarray(
+                np.divide(np.subtract(scaled, minimum), spread), dtype=float
+            )
+    except FloatingPointError as exc:
+        raise _NumericError("risk normalization is not representable") from exc
+    _require_finite("risk normalization", risk)
+    return risk
 
 
 def _validate_forecast(forecast: PredictionFrame) -> tuple[pd.DataFrame, object]:
     if not isinstance(forecast, PredictionFrame):
         raise ContractError("forecast must be a PredictionFrame")
-    frame = forecast.to_pandas()
-    if frame.empty:
+    raw = forecast.to_pandas()
+    if raw.empty:
         raise ContractError("forecast must contain at least one row")
+    if "valid_time" in raw.columns and raw["valid_time"].duplicated().any():
+        raise ContractError("forecast: exactly one value is required per unique valid_time")
+    try:
+        frame = PredictionFrame.from_pandas(raw).to_pandas()
+    except ContractError as exc:
+        raise ContractError(f"forecast: {exc}") from exc
+    _require_exact_utc(raw, ("issue_time", "valid_time"), "forecast")
     site_id = _require_one_value(frame, "site_id", "forecast")
     issue_time = _require_one_value(frame, "issue_time", "forecast")
     for column in ("target", "model_id", "unit"):
@@ -82,9 +111,6 @@ def _validate_forecast(forecast: PredictionFrame) -> tuple[pd.DataFrame, object]
 
     if frame["valid_time"].duplicated().any():
         raise ContractError("forecast: exactly one value is required per unique valid_time")
-    if not np.isfinite(frame["value"].to_numpy(dtype=float)).all():
-        raise ContractError("forecast: value must be finite")
-    _require_exact_utc(frame, ("issue_time", "valid_time"), "forecast")
     if not (frame["valid_time"] > issue_time).all():
         raise ContractError("forecast: valid_time must be strictly after issue_time")
     frame.sort_values("valid_time", kind="mergesort", inplace=True)
@@ -95,17 +121,27 @@ def _validate_forecast(forecast: PredictionFrame) -> tuple[pd.DataFrame, object]
 def _validate_workload(workload: WorkloadFrame, site_id: object) -> pd.DataFrame:
     if not isinstance(workload, WorkloadFrame):
         raise ContractError("workload must be a WorkloadFrame")
-    frame = workload.to_pandas()
-    if frame.empty:
+    raw = workload.to_pandas()
+    if raw.empty:
         raise ContractError("workload must contain at least one row")
+    if "demand" in raw.columns:
+        try:
+            demand = raw["demand"].to_numpy(dtype=float)
+        except (TypeError, ValueError):
+            demand = np.array([], dtype=float)
+        if demand.size and not np.isfinite(demand).all():
+            raise ContractError("workload: demand must be finite and nonnegative")
+    try:
+        frame = WorkloadFrame.from_pandas(raw).to_pandas()
+    except ContractError as exc:
+        raise ContractError(f"workload: {exc}") from exc
+    _require_exact_utc(raw, ("event_time", "deadline"), "workload")
     workload_site = _require_one_value(frame, "site_id", "workload")
     if workload_site != site_id:
         raise ContractError("workload: site_id must match forecast site_id")
     _require_one_value(frame, "resource_type", "workload")
     _require_one_value(frame, "unit", "workload")
-    _require_exact_utc(frame, ("event_time", "deadline"), "workload")
-    demand = frame["demand"].to_numpy(dtype=float)
-    if not np.isfinite(demand).all() or (demand < 0.0).any():
+    if (frame["demand"] < 0.0).any():
         raise ContractError("workload: demand must be finite and nonnegative")
     return frame
 
@@ -115,8 +151,15 @@ def _baseline_schedule(
     flexible_after: np.ndarray | None = None,
 ) -> pd.DataFrame:
     after = prepared.flexible_before if flexible_after is None else flexible_after
-    total_before = prepared.fixed + prepared.flexible_before
-    total_after = prepared.fixed + after
+    try:
+        with np.errstate(over="raise", invalid="raise", divide="raise"):
+            total_before = np.add(prepared.fixed, prepared.flexible_before)
+            total_after = np.add(prepared.fixed, after)
+    except FloatingPointError as exc:
+        raise _NumericError("schedule totals are not representable") from exc
+    _require_finite(
+        "schedule", prepared.forecast_values, prepared.capacity, total_before, total_after
+    )
     schedule: pd.DataFrame = pd.DataFrame(
         {
             "site_id": [prepared.site_id] * len(prepared.slots),
@@ -134,6 +177,11 @@ def _baseline_schedule(
     return schedule
 
 
+def _empty_schedule() -> pd.DataFrame:
+    schedule: pd.DataFrame = pd.DataFrame(columns=_SCHEDULE_COLUMNS)
+    return schedule
+
+
 def _metrics(
     schedule: pd.DataFrame,
     risk: np.ndarray,
@@ -142,26 +190,80 @@ def _metrics(
     baseline = schedule["total_before"].to_numpy(dtype=float)
     scheduled = schedule["total_after"].to_numpy(dtype=float)
     forecast_values = schedule["forecast_value"].to_numpy(dtype=float)
-    baseline_peak = float(np.max(baseline))
-    scheduled_peak = float(np.max(scheduled))
-    baseline_cost = float(np.dot(baseline, forecast_values))
-    scheduled_cost = float(np.dot(scheduled, forecast_values))
-    baseline_risk = float(np.dot(baseline, risk))
-    scheduled_risk = float(np.dot(scheduled, risk))
-    energy_error = float(abs(np.sum(scheduled) - np.sum(baseline)))
+    try:
+        with np.errstate(over="raise", invalid="raise", divide="raise"):
+            baseline_peak = float(np.max(baseline))
+            scheduled_peak = float(np.max(scheduled))
+            baseline_cost = float(np.dot(baseline, forecast_values))
+            scheduled_cost = float(np.dot(scheduled, forecast_values))
+            baseline_risk = float(np.dot(baseline, risk))
+            scheduled_risk = float(np.dot(scheduled, risk))
+            energy_error = float(abs(np.subtract(np.sum(scheduled), np.sum(baseline))))
+            values = np.array(
+                [
+                    baseline_peak,
+                    scheduled_peak,
+                    np.subtract(scheduled_peak, baseline_peak),
+                    baseline_cost,
+                    scheduled_cost,
+                    np.subtract(scheduled_cost, baseline_cost),
+                    baseline_risk,
+                    scheduled_risk,
+                    np.subtract(scheduled_risk, baseline_risk),
+                    energy_error,
+                    solver_status,
+                ],
+                dtype=float,
+            )
+    except FloatingPointError as exc:
+        raise _NumericError("decision metrics are not representable") from exc
+    _require_finite("decision metrics", values)
     return {
         "baseline_peak": baseline_peak,
         "scheduled_peak": scheduled_peak,
-        "peak_change": scheduled_peak - baseline_peak,
+        "peak_change": float(values[2]),
         "baseline_cost_index": baseline_cost,
         "scheduled_cost_index": scheduled_cost,
-        "cost_index_change": scheduled_cost - baseline_cost,
+        "cost_index_change": float(values[5]),
         "baseline_risk_exposure": baseline_risk,
         "scheduled_risk_exposure": scheduled_risk,
-        "risk_exposure_change": scheduled_risk - baseline_risk,
+        "risk_exposure_change": float(values[8]),
         "energy_conservation_error": energy_error,
         "solver_status": float(solver_status),
     }
+
+
+def _numeric_infeasible(
+    message: str,
+    prepared: _PreparedInputs | None = None,
+    violations: tuple[str, ...] = (),
+) -> DecisionResult:
+    schedule = _empty_schedule()
+    if prepared is not None:
+        try:
+            schedule = _baseline_schedule(prepared)
+        except _NumericError:
+            schedule = _empty_schedule()
+    baseline_peak = float(schedule["total_before"].max()) if not schedule.empty else 0.0
+    metrics = {
+        "baseline_peak": baseline_peak,
+        "scheduled_peak": baseline_peak,
+        "peak_change": 0.0,
+        "baseline_cost_index": 0.0,
+        "scheduled_cost_index": 0.0,
+        "cost_index_change": 0.0,
+        "baseline_risk_exposure": 0.0,
+        "scheduled_risk_exposure": 0.0,
+        "risk_exposure_change": 0.0,
+        "energy_conservation_error": 0.0,
+        "solver_status": _NUMERIC_STATUS,
+    }
+    return DecisionResult(
+        schedule=schedule,
+        feasible=False,
+        violations=(*violations, f"numeric: {message}"),
+        metrics=metrics,
+    )
 
 
 def _infeasible(
@@ -169,12 +271,16 @@ def _infeasible(
     violations: tuple[str, ...],
     solver_status: float,
 ) -> DecisionResult:
-    schedule = _baseline_schedule(prepared)
+    try:
+        schedule = _baseline_schedule(prepared)
+        metrics = _metrics(schedule, prepared.risk, solver_status)
+    except _NumericError as exc:
+        return _numeric_infeasible(str(exc), prepared, violations)
     return DecisionResult(
         schedule=schedule,
         feasible=False,
         violations=violations,
-        metrics=_metrics(schedule, prepared.risk, solver_status),
+        metrics=metrics,
     )
 
 
@@ -200,32 +306,49 @@ def _prepare(
     demands = workload_data["demand"].to_numpy(dtype=float, copy=True)
     fractions = workload_data["flexible_fraction"].to_numpy(dtype=float, copy=True)
 
-    for row_position in range(row_count):
-        event_time = event_times[row_position]
-        baseline_slot = int(slots.searchsorted(event_time, side="left"))
-        effective_fraction = min(float(fractions[row_position]), constraints.flexible_fraction)
-        row_flexible = float(demands[row_position]) * effective_fraction
-        flexible_energy[row_position] = row_flexible
-        if baseline_slot >= slot_count:
-            violations.append(
-                f"horizon: workload row {row_position} has no forecast slot at or after event_time"
-            )
-            continue
+    try:
+        with np.errstate(over="raise", invalid="raise", divide="raise"):
+            for row_position in range(row_count):
+                event_time = event_times[row_position]
+                baseline_slot = int(slots.searchsorted(event_time, side="left"))
+                effective_fraction = min(
+                    float(fractions[row_position]), constraints.flexible_fraction
+                )
+                row_flexible = float(np.multiply(demands[row_position], effective_fraction))
+                flexible_energy[row_position] = row_flexible
+                if baseline_slot >= slot_count:
+                    violations.append(
+                        "horizon: workload row "
+                        f"{row_position} has no forecast slot at or after event_time"
+                    )
+                    continue
 
-        row_fixed = float(demands[row_position]) - row_flexible
-        fixed[baseline_slot] += row_fixed
-        flexible_before[baseline_slot] += row_flexible
-        row_eligible = slots >= event_time
-        if not pd.isna(deadlines[row_position]):
-            row_eligible &= slots <= pd.Timestamp(deadlines[row_position])
-        eligible[row_position] = np.asarray(row_eligible, dtype=bool)
-        if not row_eligible.any():
-            violations.append(
-                f"deadline: workload row {row_position} has no eligible forecast slot"
-            )
+                row_fixed = float(np.subtract(demands[row_position], row_flexible))
+                fixed[baseline_slot] = np.add(fixed[baseline_slot], row_fixed)
+                flexible_before[baseline_slot] = np.add(
+                    flexible_before[baseline_slot], row_flexible
+                )
+                row_eligible = slots >= event_time
+                if not pd.isna(deadlines[row_position]):
+                    row_eligible &= slots <= pd.Timestamp(deadlines[row_position])
+                eligible[row_position] = np.asarray(row_eligible, dtype=bool)
+                if not row_eligible.any():
+                    violations.append(
+                        f"deadline: workload row {row_position} has no eligible forecast slot"
+                    )
 
-    total_before = fixed + flexible_before
-    capacity = constraints.max_shift_multiplier * total_before
+            total_before = np.add(fixed, flexible_before)
+            capacity = np.multiply(constraints.max_shift_multiplier, total_before)
+    except FloatingPointError as exc:
+        raise _NumericError("baseline aggregation or capacity is not representable") from exc
+    _require_finite(
+        "baseline aggregation",
+        fixed,
+        flexible_before,
+        flexible_energy,
+        total_before,
+        capacity,
+    )
     prepared = _PreparedInputs(
         site_id=site_id,
         slots=slots,
@@ -251,7 +374,10 @@ class ShadowScheduler:
     ) -> DecisionResult:
         if not isinstance(constraints, DecisionConstraints):
             raise ContractError("constraints must be DecisionConstraints")
-        prepared, input_violations = _prepare(forecast, workload, constraints)
+        try:
+            prepared, input_violations = _prepare(forecast, workload, constraints)
+        except _NumericError as exc:
+            return _numeric_infeasible(str(exc))
         if input_violations:
             return _infeasible(prepared, input_violations, -1.0)
 
@@ -260,64 +386,146 @@ class ShadowScheduler:
         variable_count = allocation_count + 1
         peak_index = allocation_count
 
-        cost = np.zeros(variable_count, dtype=float)
-        slot_cost = prepared.forecast_values + constraints.risk_penalty * prepared.risk
-        cost[:allocation_count] = np.tile(slot_cost, row_count)
-        cost[peak_index] = constraints.peak_penalty
+        try:
+            with np.errstate(over="raise", invalid="raise", divide="raise"):
+                cost = np.zeros(variable_count, dtype=float)
+                risk_cost = np.multiply(constraints.risk_penalty, prepared.risk)
+                slot_cost = np.add(prepared.forecast_values, risk_cost)
+                cost[:allocation_count] = np.tile(slot_cost, row_count)
+                cost[peak_index] = constraints.peak_penalty
 
-        equality = np.zeros((row_count, variable_count), dtype=float)
-        for row_position in range(row_count):
-            start = row_position * slot_count
-            equality[row_position, start : start + slot_count] = 1.0
+                equality = np.zeros((row_count, variable_count), dtype=float)
+                for row_position in range(row_count):
+                    start = row_position * slot_count
+                    equality[row_position, start : start + slot_count] = 1.0
 
-        inequality = np.zeros((slot_count * 2, variable_count), dtype=float)
-        upper = np.zeros(slot_count * 2, dtype=float)
-        for slot_position in range(slot_count):
-            allocation_positions = np.arange(row_count) * slot_count + slot_position
-            inequality[slot_position, allocation_positions] = 1.0
-            upper[slot_position] = prepared.capacity[slot_position] - prepared.fixed[slot_position]
-            peak_row = slot_count + slot_position
-            inequality[peak_row, allocation_positions] = 1.0
-            inequality[peak_row, peak_index] = -1.0
-            upper[peak_row] = -prepared.fixed[slot_position]
+                inequality = np.zeros((slot_count * 2, variable_count), dtype=float)
+                upper = np.zeros(slot_count * 2, dtype=float)
+                for slot_position in range(slot_count):
+                    allocation_positions = np.arange(row_count) * slot_count + slot_position
+                    inequality[slot_position, allocation_positions] = 1.0
+                    upper[slot_position] = np.subtract(
+                        prepared.capacity[slot_position], prepared.fixed[slot_position]
+                    )
+                    peak_row = slot_count + slot_position
+                    inequality[peak_row, allocation_positions] = 1.0
+                    inequality[peak_row, peak_index] = -1.0
+                    upper[peak_row] = np.negative(prepared.fixed[slot_position])
+        except FloatingPointError:
+            return _numeric_infeasible(
+                "LP objective or constraint arithmetic is not representable",
+                prepared,
+            )
+        try:
+            _require_finite(
+                "LP objective and constraints",
+                cost,
+                equality,
+                inequality,
+                upper,
+                prepared.flexible_energy,
+            )
+        except _NumericError as exc:
+            return _numeric_infeasible(str(exc), prepared)
 
         bounds: list[tuple[float, float | None]] = []
         for is_eligible in prepared.eligible.ravel():
             bounds.append((0.0, None if is_eligible else 0.0))
         bounds.append((0.0, None))
 
-        solver = linprog(
-            cost,
-            A_ub=inequality,
-            b_ub=upper,
-            A_eq=equality,
-            b_eq=prepared.flexible_energy,
-            bounds=bounds,
-            method="highs",
-        )
+        try:
+            solver = linprog(
+                cost,
+                A_ub=inequality,
+                b_ub=upper,
+                A_eq=equality,
+                b_eq=prepared.flexible_energy,
+                bounds=bounds,
+                method="highs",
+            )
+        except (FloatingPointError, OverflowError, ValueError) as exc:
+            return _numeric_infeasible(f"linprog rejected finite LP arithmetic: {exc}", prepared)
         if not solver.success or solver.x is None:
             violation = f"solver status={solver.status}: {solver.message}"
             return _infeasible(prepared, (violation,), float(solver.status))
 
-        allocations = np.asarray(solver.x[:allocation_count], dtype=float).reshape(
-            row_count, slot_count
-        )
-        flexible_after = allocations.sum(axis=0)
-        schedule = _baseline_schedule(prepared, flexible_after)
-        metrics = _metrics(schedule, prepared.risk, float(solver.status))
-        capacity_error = float(np.max(schedule["total_after"].to_numpy() - prepared.capacity))
-        row_energy_error = float(np.max(np.abs(allocations.sum(axis=1) - prepared.flexible_energy)))
-        if (
-            metrics["energy_conservation_error"] > _TOLERANCE
-            or row_energy_error > _TOLERANCE
-            or capacity_error > _TOLERANCE
-        ):
-            violation = (
-                "solver verification failed: "
-                f"energy_error={metrics['energy_conservation_error']}, "
-                f"row_energy_error={row_energy_error}, capacity_error={capacity_error}"
+        status = float(solver.status)
+
+        def invalid_solution(message: str) -> DecisionResult:
+            return _infeasible(
+                prepared,
+                (f"solver verification failed: {message}",),
+                status,
             )
-            return _infeasible(prepared, (violation,), float(solver.status))
+
+        try:
+            solution = np.asarray(solver.x, dtype=float)
+        except (TypeError, ValueError, OverflowError):
+            return invalid_solution("solution must be numeric")
+        if solution.ndim != 1:
+            return invalid_solution("solution must be one-dimensional")
+        if len(solution) != variable_count:
+            return invalid_solution(
+                f"solution length {len(solution)} does not match expected {variable_count}"
+            )
+        if not np.isfinite(solution).all():
+            return invalid_solution("solution must contain only finite values")
+
+        solution = solution.copy()
+        # HiGHS may return bound noise around zero. Only values within the shared
+        # 1e-8 feasibility tolerance are cleaned; larger violations are rejected.
+        solution[np.abs(solution) <= _TOLERANCE] = 0.0
+        if (solution < 0.0).any():
+            return invalid_solution("allocations and peak must be nonnegative")
+
+        allocations = solution[:allocation_count].reshape(row_count, slot_count)
+        peak = float(solution[peak_index])
+        if (allocations[~prepared.eligible] > 0.0).any():
+            return invalid_solution("ineligible allocation violates a zero bound")
+
+        try:
+            with np.errstate(over="raise", invalid="raise", divide="raise"):
+                row_totals = np.sum(allocations, axis=1)
+                row_energy_error = float(
+                    np.max(np.abs(np.subtract(row_totals, prepared.flexible_energy)))
+                )
+                flexible_after = np.sum(allocations, axis=0)
+                schedule = _baseline_schedule(prepared, flexible_after)
+                total_after = schedule["total_after"].to_numpy(dtype=float)
+                capacity_error = float(np.max(np.subtract(total_after, prepared.capacity)))
+                peak_error = float(np.max(np.subtract(total_after, peak)))
+        except (FloatingPointError, _NumericError) as exc:
+            return _numeric_infeasible(
+                f"solver postcondition arithmetic is not representable: {exc}",
+                prepared,
+            )
+        try:
+            _require_finite(
+                "solver postconditions",
+                row_totals,
+                flexible_after,
+                total_after,
+                np.array([row_energy_error, capacity_error, peak_error]),
+            )
+        except _NumericError as exc:
+            return _numeric_infeasible(str(exc), prepared)
+        if row_energy_error > _TOLERANCE:
+            return invalid_solution(f"row equality error {row_energy_error} exceeds {_TOLERANCE}")
+        if capacity_error > _TOLERANCE:
+            return invalid_solution(
+                f"capacity upper-bound error {capacity_error} exceeds {_TOLERANCE}"
+            )
+        if peak_error > _TOLERANCE:
+            return invalid_solution(f"peak inequality error {peak_error} exceeds {_TOLERANCE}")
+        try:
+            metrics = _metrics(schedule, prepared.risk, status)
+        except _NumericError as exc:
+            return _numeric_infeasible(str(exc), prepared)
+        if metrics["energy_conservation_error"] > _TOLERANCE:
+            return invalid_solution(
+                "aggregate energy error "
+                f"{metrics['energy_conservation_error']} exceeds {_TOLERANCE}"
+            )
         return DecisionResult(
             schedule=schedule,
             feasible=True,
