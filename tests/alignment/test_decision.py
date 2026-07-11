@@ -8,6 +8,21 @@ from climadc.alignment.decision import DecisionViewBuilder
 from climadc.contracts.frames import ClimateForecastFrame, DCTelemetryFrame
 
 
+class _MutableHashableId:
+    def __init__(self, label: str) -> None:
+        self.label = label
+        self.payload = ["source"]
+
+    def __hash__(self) -> int:
+        return hash(self.label)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _MutableHashableId) and self.label == other.label
+
+    def __lt__(self, other: "_MutableHashableId") -> bool:
+        return self.label < other.label
+
+
 @pytest.fixture
 def climate_frame() -> ClimateForecastFrame:
     return ClimateForecastFrame.from_pandas(
@@ -222,3 +237,60 @@ def test_decision_view_returns_copies_without_mutating_contract_frames(
 
     pd.testing.assert_frame_equal(climate_frame.to_pandas(copy=False), climate_before)
     pd.testing.assert_frame_equal(telemetry_frame.to_pandas(copy=False), telemetry_before)
+
+
+def test_decision_view_deeply_isolates_mutable_object_cells() -> None:
+    forecast_source = _MutableHashableId("forecast-source")
+    history_device = _MutableHashableId("history-device")
+    target_device = _MutableHashableId("target-device")
+    climate = ClimateForecastFrame.from_pandas(
+        pd.DataFrame(
+            {
+                "site_id": ["dc-1"],
+                "issue_time": pd.to_datetime(["2026-01-01 22:00Z"]),
+                "available_at": pd.to_datetime(["2026-01-01 22:05Z"]),
+                "valid_time": pd.to_datetime(["2026-01-02 02:00Z"]),
+                "variable": ["air_temperature"],
+                "value": [21.0],
+                "unit": ["degC"],
+                "source": [forecast_source],
+                "quantile": [pd.NA],
+                "member": [pd.NA],
+            }
+        )
+    )
+    telemetry = DCTelemetryFrame.from_pandas(
+        pd.DataFrame(
+            {
+                "site_id": ["dc-1", "dc-1"],
+                "device_id": [history_device, target_device],
+                "event_time": pd.to_datetime(["2026-01-01 23:00Z", "2026-01-02 04:00Z"]),
+                "available_at": pd.to_datetime(["2026-01-01 23:05Z", "2026-01-02 04:05Z"]),
+                "metric": ["total_power", "total_power"],
+                "value": [100.0, 110.0],
+                "unit": ["kW", "kW"],
+                "quality": ["observed", "observed"],
+            }
+        )
+    )
+    view = DecisionViewBuilder().build(
+        climate,
+        telemetry,
+        pd.Timestamp("2026-01-02 00:00", tz="UTC"),
+        pd.Timedelta("4h"),
+    )
+
+    returned_forecast_source = view.forecast.iloc[0]["source"]
+    returned_history_device = view.telemetry_history.iloc[0]["device_id"]
+    returned_target_device = view.observed_targets.iloc[0]["device_id"]
+    returned_forecast_source.payload.append("returned")
+    returned_history_device.payload.append("returned")
+    returned_target_device.payload.append("returned")
+
+    source_forecast_source = climate.to_pandas(copy=False).iloc[0]["source"]
+    source_devices = {
+        device.label: device for device in telemetry.to_pandas(copy=False)["device_id"].tolist()
+    }
+    assert source_forecast_source.payload == ["source"]
+    assert source_devices["history-device"].payload == ["source"]
+    assert source_devices["target-device"].payload == ["source"]

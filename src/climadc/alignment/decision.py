@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 
 import pandas as pd
@@ -8,6 +9,15 @@ from climadc.contracts.frames import ClimateForecastFrame, DCTelemetryFrame
 from climadc.validation.leakage import LeakageGuard
 
 _FORECAST_GROUP = ("site_id", "valid_time", "variable", "quantile", "member")
+
+
+def _deep_copy_object_cells(frame: pd.DataFrame) -> pd.DataFrame:
+    copied: pd.DataFrame = frame.copy(deep=True)
+    for position, dtype in enumerate(frame.dtypes):
+        if pd.api.types.is_object_dtype(dtype):
+            values = [deepcopy(value) for value in frame.iloc[:, position].tolist()]
+            copied.isetitem(position, pd.Series(values, index=copied.index, dtype=object))
+    return copied
 
 
 def _require_origin(origin: object) -> pd.Timestamp:
@@ -71,10 +81,12 @@ class DecisionViewBuilder:
         ].copy(deep=True)
         telemetry_history.reset_index(drop=True, inplace=True)
 
-        observed_targets = telemetry_data.loc[
-            (telemetry_data["event_time"] == target_time)
-            & (telemetry_data["quality"] == "observed")
-        ].copy(deep=True)
+        observed_targets = _deep_copy_object_cells(
+            telemetry_data.loc[
+                (telemetry_data["event_time"] == target_time)
+                & (telemetry_data["quality"] == "observed")
+            ]
+        )
         observed_targets.reset_index(drop=True, inplace=True)
 
         return DecisionView(
