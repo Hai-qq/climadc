@@ -4,10 +4,11 @@ import builtins
 
 import pandas as pd
 import pytest
-import xarray as xr
 
 from climadc.adapters.xarray import climate_from_xarray
 from climadc.errors import ConfigurationError
+
+xr = pytest.importorskip("xarray")
 
 
 def _dataset(*, timezone: str | None = "Asia/Shanghai") -> xr.Dataset:
