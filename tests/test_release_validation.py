@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
 from pathlib import PurePosixPath
-import shutil
 import subprocess
 import sys
 import tarfile
@@ -62,6 +63,55 @@ def _distributions(
             _write_member(archive, f"{root}/{relative}")
         if forbidden_sdist_path is not None:
             _write_member(archive, f"{root}/{forbidden_sdist_path}")
+
+
+@contextmanager
+def _runtime_packaging_probes(repository: Path, marker_name: str) -> Iterator[None]:
+    created_files: list[Path] = []
+    created_directories: list[Path] = []
+    marker_directories = [
+        repository / "runs" / marker_name,
+        repository / ".cache" / marker_name,
+        repository / "data" / "raw" / marker_name,
+        repository / "artifacts" / marker_name,
+        repository / ".worktrees" / marker_name,
+        repository / ".superpowers" / marker_name,
+        repository / "site" / marker_name,
+        repository / "dist" / marker_name,
+        repository / "htmlcov" / marker_name,
+    ]
+
+    def create_directory(path: Path) -> None:
+        path.mkdir(parents=True, exist_ok=False)
+        created_directories.append(path)
+
+    def create_file(path: Path, payload: bytes = b"must not ship\n") -> None:
+        stream = path.open("xb")
+        created_files.append(path)
+        with stream:
+            stream.write(payload)
+
+    try:
+        for directory in marker_directories:
+            create_directory(directory)
+            create_file(directory / "private-runtime.txt")
+        residue_directory = repository / f"{marker_name}.egg-info"
+        create_directory(residue_directory)
+        create_file(residue_directory / "PKG-INFO")
+        for suffix in (".pyc", ".pyo", ".pyd"):
+            create_file(repository / f"{marker_name}{suffix}")
+        yield
+    finally:
+        for path in reversed(created_files):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+        for path in reversed(created_directories):
+            try:
+                path.rmdir()
+            except FileNotFoundError:
+                pass
 
 
 def test_expected_release_tag_maps_pep440_alpha() -> None:
@@ -148,33 +198,29 @@ def test_sdist_hatch_policy_declares_runtime_exclusions() -> None:
         assert f'"{exclusion}"' in pyproject
 
 
+def test_packaging_probe_collision_preserves_preexisting_marker(tmp_path: Path) -> None:
+    marker_name = "collision"
+    preexisting = tmp_path / ".cache" / marker_name
+    preexisting.mkdir(parents=True)
+    payload = preexisting / "private-runtime.txt"
+    payload.write_bytes(b"owner data\n")
+
+    with pytest.raises(FileExistsError):
+        with _runtime_packaging_probes(tmp_path, marker_name):
+            pytest.fail("probe setup must stop at the collision")
+
+    assert payload.read_bytes() == b"owner data\n"
+    assert preexisting.is_dir()
+    assert not (tmp_path / "runs" / marker_name).exists()
+
+
 def test_fresh_sdist_excludes_ignored_runtime_files_but_retains_public_sources(
     tmp_path: Path,
 ) -> None:
     repository = Path(__file__).parents[1]
     marker_name = f".climadc-packaging-test-{tmp_path.name}"
-    marker_directories = [
-        repository / "runs" / marker_name,
-        repository / ".cache" / marker_name,
-        repository / "data" / "raw" / marker_name,
-        repository / "artifacts" / marker_name,
-        repository / ".worktrees" / marker_name,
-        repository / ".superpowers" / marker_name,
-        repository / "site" / marker_name,
-        repository / "dist" / marker_name,
-        repository / "htmlcov" / marker_name,
-    ]
-    for directory in marker_directories:
-        directory.mkdir(parents=True, exist_ok=False)
-        (directory / "private-runtime.txt").write_text("must not ship\n", encoding="utf-8")
-    residue_directory = repository / f"{marker_name}.egg-info"
-    residue_directory.mkdir(exist_ok=False)
-    (residue_directory / "PKG-INFO").write_text("must not ship\n", encoding="utf-8")
-    residue_files = [repository / f"{marker_name}{suffix}" for suffix in (".pyc", ".pyo", ".pyd")]
-    for residue_file in residue_files:
-        residue_file.write_bytes(b"must not ship\n")
 
-    try:
+    with _runtime_packaging_probes(repository, marker_name):
         completed = subprocess.run(
             [
                 sys.executable,
@@ -231,12 +277,6 @@ def test_fresh_sdist_excludes_ignored_runtime_files_but_retains_public_sources(
             "tests/fixtures/weatherdc_small/PROVENANCE.yaml",
         ):
             assert required in relatives
-    finally:
-        for directory in marker_directories:
-            shutil.rmtree(directory)
-        shutil.rmtree(residue_directory)
-        for residue_file in residue_files:
-            residue_file.unlink()
 
 
 def test_release_workflow_passes_event_data_through_step_environment() -> None:
