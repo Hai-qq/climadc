@@ -84,6 +84,20 @@ def test_persistence_requires_legal_history_for_every_site_origin(
         model.predict(pd.DatetimeIndex(["2025-12-31 23:00Z"]), pd.Timedelta("1h"))
 
 
+def test_persistence_ignores_available_row_with_valid_time_after_origin() -> None:
+    train = _history(
+        [
+            ("dc-1", "2026-01-01 01:00Z", "2026-01-01 01:00Z", "power", 101.0, "kW"),
+            ("dc-1", "2026-01-01 03:00Z", "2026-01-01 00:00Z", "power", 999.0, "kW"),
+        ]
+    )
+    model = PersistenceForecaster(target="power").fit(train, context={})
+
+    frame = model.predict(pd.DatetimeIndex(["2026-01-01 02:00Z"]), pd.Timedelta("1h")).to_pandas()
+
+    assert frame["value"].tolist() == [101.0]
+
+
 def test_fit_does_not_mutate_training_data_and_normalizes_aware_timestamps(
     persistence_history: pd.DataFrame,
 ) -> None:
@@ -297,3 +311,86 @@ def test_linear_rejects_site_with_insufficient_rows() -> None:
 
     with pytest.raises(ConfigurationError, match="Insufficient training rows"):
         LinearForecaster(target="power", features=("hour",)).fit(train, context={})
+
+
+def _cross_site_linear_history(include_earlier_site_b: bool) -> pd.DataFrame:
+    rows = [
+        (
+            site,
+            f"2026-01-0{day} {hour:02d}:00Z",
+            f"2026-01-0{day} {hour:02d}:00Z",
+            "power",
+            base + hour,
+            "kW",
+        )
+        for site, base in (("dc-1", 100.0), ("dc-2", 200.0))
+        for day, hour in ((2, 0), (2, 6), (3, 0), (3, 6))
+    ]
+    if include_earlier_site_b:
+        rows.append(
+            (
+                "dc-2",
+                "2026-01-01 00:00Z",
+                "2026-01-01 00:00Z",
+                "power",
+                190.0,
+                "kW",
+            )
+        )
+    return _history(rows)
+
+
+def test_linear_elapsed_anchor_and_site_prediction_are_cross_site_isolated() -> None:
+    baseline = LinearForecaster(target="power", features=("elapsed_hours",)).fit(
+        _cross_site_linear_history(include_earlier_site_b=False), context={}
+    )
+    perturbed = LinearForecaster(target="power", features=("elapsed_hours",)).fit(
+        _cross_site_linear_history(include_earlier_site_b=True), context={}
+    )
+    origins = pd.DatetimeIndex(["2026-01-04 00:00Z"])
+
+    assert baseline.feature_anchors_["dc-1"] == pd.Timestamp("2026-01-02 00:00Z")
+    assert perturbed.feature_anchors_["dc-1"] == baseline.feature_anchors_["dc-1"]
+    baseline_value = (
+        baseline.predict(origins, pd.Timedelta("6h"))
+        .to_pandas()
+        .query("site_id == 'dc-1'")["value"]
+    )
+    perturbed_value = (
+        perturbed.predict(origins, pd.Timedelta("6h"))
+        .to_pandas()
+        .query("site_id == 'dc-1'")["value"]
+    )
+    assert perturbed_value.tolist() == pytest.approx(baseline_value.tolist())
+
+
+def test_linear_failed_refit_preserves_previous_fitted_state() -> None:
+    model = LinearForecaster(target="power", features=("elapsed_hours",)).fit(
+        _cross_site_linear_history(include_earlier_site_b=False), context={}
+    )
+    origins = pd.DatetimeIndex(["2026-01-04 00:00Z"])
+    before = model.predict(origins, pd.Timedelta("6h")).to_pandas()
+    old_models = model.models_.copy()
+    old_anchors = model.feature_anchors_.copy()
+    invalid = _cross_site_linear_history(include_earlier_site_b=False)
+    invalid = invalid.loc[~((invalid["site_id"] == "dc-2") & (invalid.index != 4))]
+
+    with pytest.raises(ConfigurationError, match="Insufficient training rows"):
+        model.fit(invalid, context={})
+
+    assert model.models_ == old_models
+    assert model.feature_anchors_ == old_anchors
+    assert_frame_equal(model.predict(origins, pd.Timedelta("6h")).to_pandas(), before)
+
+
+def test_linear_first_failed_fit_remains_unfitted() -> None:
+    train = _history([("dc-1", "2026-01-01 00:00Z", "2026-01-01 00:00Z", "power", 100.0, "kW")])
+    model = LinearForecaster(target="power", features=("elapsed_hours",))
+
+    with pytest.raises(ConfigurationError, match="Insufficient training rows"):
+        model.fit(train, context={})
+
+    assert model.models_ == {}
+    assert model.feature_anchors_ == {}
+    with pytest.raises(ConfigurationError, match="not fitted"):
+        model.predict(pd.DatetimeIndex(["2026-01-02 00:00Z"]), pd.Timedelta("1h"))

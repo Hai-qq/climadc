@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from math import isfinite
 from numbers import Real
 from typing import Any, cast
@@ -185,6 +186,13 @@ def _feature_frame(
     )
 
 
+@dataclass(frozen=True)
+class _PreparedTrainingData:
+    frame: pd.DataFrame
+    unit: str
+    sites: tuple[str, ...]
+
+
 class _BaseForecaster:
     def __init__(self, *, target: str, model_id: str) -> None:
         self.target = _require_nonempty_label("target", target)
@@ -193,12 +201,18 @@ class _BaseForecaster:
         self.sites_: tuple[str, ...] = ()
         self._train: pd.DataFrame | None = None
 
-    def _fit_training_data(self, train: pd.DataFrame) -> pd.DataFrame:
+    def _prepare_training_data(self, train: pd.DataFrame) -> _PreparedTrainingData:
         selected = _validate_training_frame(train, self.target)
-        self._train = selected
-        self.unit = str(selected["unit"].iloc[0])
-        self.sites_ = tuple(sorted(str(site) for site in selected["site_id"].unique()))
-        return selected
+        return _PreparedTrainingData(
+            frame=selected,
+            unit=str(selected["unit"].iloc[0]),
+            sites=tuple(sorted(str(site) for site in selected["site_id"].unique())),
+        )
+
+    def _commit_training_data(self, prepared: _PreparedTrainingData) -> None:
+        self._train = prepared.frame
+        self.unit = prepared.unit
+        self.sites_ = prepared.sites
 
     def _require_fitted(self) -> tuple[pd.DataFrame, str]:
         if self._train is None or self.unit is None:
@@ -211,7 +225,8 @@ class PersistenceForecaster(_BaseForecaster):
         super().__init__(target=target, model_id=model_id)
 
     def fit(self, train: pd.DataFrame, context: Mapping[str, object]) -> PersistenceForecaster:
-        self._fit_training_data(train)
+        prepared = self._prepare_training_data(train)
+        self._commit_training_data(prepared)
         return self
 
     def predict(self, origins: pd.DatetimeIndex, horizon: pd.Timedelta) -> PredictionFrame:
@@ -256,7 +271,8 @@ class SeasonalNaiveForecaster(_BaseForecaster):
         self.period = period
 
     def fit(self, train: pd.DataFrame, context: Mapping[str, object]) -> SeasonalNaiveForecaster:
-        self._fit_training_data(train)
+        prepared = self._prepare_training_data(train)
+        self._commit_training_data(prepared)
         return self
 
     def predict(self, origins: pd.DatetimeIndex, horizon: pd.Timedelta) -> PredictionFrame:
@@ -310,15 +326,17 @@ class ClimatologyForecaster(_BaseForecaster):
         )
 
     def fit(self, train: pd.DataFrame, context: Mapping[str, object]) -> ClimatologyForecaster:
-        selected = self._fit_training_data(train)
+        prepared = self._prepare_training_data(train)
         values: dict[tuple[object, ...], list[float]] = {}
-        for row in selected.itertuples(index=False):
+        for row in prepared.frame.itertuples(index=False):
             key = self._group_key(str(row.site_id), pd.Timestamp(cast(Any, row.valid_time)))
             values.setdefault(key, []).append(float(cast(Any, row.value)))
-        self.group_means_ = {
+        group_means = {
             key: float(sum(group_values) / len(group_values))
             for key, group_values in values.items()
         }
+        self._commit_training_data(prepared)
+        self.group_means_ = group_means
         return self
 
     def predict(self, origins: pd.DatetimeIndex, horizon: pd.Timedelta) -> PredictionFrame:
@@ -357,34 +375,45 @@ class LinearForecaster(_BaseForecaster):
             "features", features, _LINEAR_FEATURES, allow_empty=False
         )
         self.models_: dict[str, Pipeline] = {}
-        self._feature_anchor: pd.Timestamp | None = None
+        self.feature_anchors_: dict[str, pd.Timestamp] = {}
 
     def fit(self, train: pd.DataFrame, context: Mapping[str, object]) -> LinearForecaster:
-        selected = self._fit_training_data(train)
-        self._feature_anchor = pd.Timestamp(selected["valid_time"].min())
-        self.models_ = {}
-        for site_id in self.sites_:
-            site_rows = selected.loc[selected["site_id"] == site_id]
+        prepared = self._prepare_training_data(train)
+        site_frames = {
+            site_id: cast(
+                pd.DataFrame,
+                prepared.frame.loc[prepared.frame["site_id"] == site_id],
+            )
+            for site_id in prepared.sites
+        }
+        for site_id, site_rows in site_frames.items():
             if len(site_rows) < 2:
                 raise ConfigurationError(
                     f"Insufficient training rows for site {site_id!r}; need at least 2"
                 )
+        feature_anchors = {
+            site_id: pd.Timestamp(site_rows["valid_time"].min())
+            for site_id, site_rows in site_frames.items()
+        }
+        models: dict[str, Pipeline] = {}
+        for site_id, site_rows in site_frames.items():
             times = [pd.Timestamp(value) for value in site_rows["valid_time"]]
-            features = _feature_frame(times, self.features, self._feature_anchor)
+            features = _feature_frame(times, self.features, feature_anchors[site_id])
             pipeline = Pipeline([("scale", StandardScaler()), ("model", Ridge())])
             pipeline.fit(features, site_rows["value"].to_numpy(dtype=float))
-            self.models_[site_id] = pipeline
+            models[site_id] = pipeline
+        self._commit_training_data(prepared)
+        self.feature_anchors_ = feature_anchors
+        self.models_ = models
         return self
 
     def predict(self, origins: pd.DatetimeIndex, horizon: pd.Timedelta) -> PredictionFrame:
         _, unit = self._require_fitted()
         checked_origins, checked_horizon = _validate_prediction_request(origins, horizon)
-        if self._feature_anchor is None:
-            raise ConfigurationError(f"{type(self).__name__} is not fitted")
         valid_times = checked_origins + checked_horizon
-        features = _feature_frame(valid_times, self.features, self._feature_anchor)
         records: list[dict[str, object]] = []
         for site_id in self.sites_:
+            features = _feature_frame(valid_times, self.features, self.feature_anchors_[site_id])
             predictions = self.models_[site_id].predict(features)
             for origin, value in zip(checked_origins, predictions, strict=True):
                 records.append(
