@@ -20,6 +20,24 @@ _VERSION_PATTERN = re.compile(
 _PROJECT_VALUE_PATTERN = re.compile(
     r'(?P<key>name|version)\s*=\s*"(?P<value>[^"\r\n]+)"\s*(?:#.*)?'
 )
+_FORBIDDEN_SDIST_PREFIXES = (
+    ".cache/",
+    ".hypothesis/",
+    ".mypy_cache/",
+    ".pytest_cache/",
+    ".ruff_cache/",
+    ".superpowers/",
+    ".venv/",
+    ".worktrees/",
+    "artifacts/",
+    "build/",
+    "data/raw/",
+    "dist/",
+    "docs/superpowers/",
+    "htmlcov/",
+    "runs/",
+    "site/",
+)
 
 
 def _project_identity(path: Path) -> tuple[str, str]:
@@ -147,9 +165,20 @@ def _validate_sdist(path: Path, identity: tuple[str, str]) -> None:
             missing = sorted(required.difference(members))
             if missing:
                 raise ReleaseValidationError(f"Sdist is missing required files: {missing}")
-            internal_prefix = f"{root}/docs/superpowers/"
-            if any(name.startswith(internal_prefix) for name in members):
-                raise ReleaseValidationError("Sdist contains internal docs/superpowers plans")
+            root_prefix = f"{root}/"
+            relative_names = [
+                name.removeprefix(root_prefix) for name in members if name.startswith(root_prefix)
+            ]
+            forbidden = sorted(
+                name
+                for name in relative_names
+                if any(name.startswith(prefix) for prefix in _FORBIDDEN_SDIST_PREFIXES)
+                or name == ".coverage"
+                or name.startswith(".coverage.")
+                or "/__pycache__/" in f"/{name}"
+            )
+            if forbidden:
+                raise ReleaseValidationError(f"Sdist contains forbidden runtime paths: {forbidden}")
             metadata_name = f"{root}/PKG-INFO"
             metadata_member = members.get(metadata_name)
             if metadata_member is None or not metadata_member.isfile():

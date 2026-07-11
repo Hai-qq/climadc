@@ -28,6 +28,7 @@ lightgbm = ["lightgbm>=4,<5"]
 xarray = ["xarray>=2024.1"]
 dev = [
   "build>=1.2,<2",
+  "hatchling>=1.27,<2",
   "hypothesis>=6.100",
   "mypy>=1.10",
   "pandas-stubs>=2.1",
@@ -51,7 +52,27 @@ Repository = "https://github.com/Hai-qq/climadc"
 packages = ["src/climadc"]
 
 [tool.hatch.build.targets.sdist]
-exclude = ["/docs/superpowers/**"]
+exclude = [
+  "/.cache/**",
+  "/.coverage",
+  "/.coverage.*",
+  "/.hypothesis/**",
+  "/.mypy_cache/**",
+  "/.pytest_cache/**",
+  "/.ruff_cache/**",
+  "/.superpowers/**",
+  "/.venv/**",
+  "/.worktrees/**",
+  "/**/__pycache__/**",
+  "/artifacts/**",
+  "/build/**",
+  "/data/raw/**",
+  "/dist/**",
+  "/docs/superpowers/**",
+  "/htmlcov/**",
+  "/runs/**",
+  "/site/**",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

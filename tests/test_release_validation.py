@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
+import shutil
+import subprocess
+import sys
 import tarfile
 import zipfile
 
@@ -30,7 +33,12 @@ def _write_member(archive: tarfile.TarFile, name: str, payload: bytes = b"presen
     archive.addfile(info, BytesIO(payload))
 
 
-def _distributions(directory: Path, *, wheel_version: str = VERSION) -> None:
+def _distributions(
+    directory: Path,
+    *,
+    wheel_version: str = VERSION,
+    forbidden_sdist_path: str | None = None,
+) -> None:
     directory.mkdir()
     wheel = directory / f"{NAME}-{VERSION}-py3-none-any.whl"
     with zipfile.ZipFile(wheel, "w") as archive:
@@ -51,6 +59,8 @@ def _distributions(directory: Path, *, wheel_version: str = VERSION) -> None:
             "tests/fixtures/weatherdc_small/PROVENANCE.yaml",
         ):
             _write_member(archive, f"{root}/{relative}")
+        if forbidden_sdist_path is not None:
+            _write_member(archive, f"{root}/{forbidden_sdist_path}")
 
 
 def test_expected_release_tag_maps_pep440_alpha() -> None:
@@ -85,11 +95,112 @@ def test_release_validation_rejects_mismatched_wheel_metadata(tmp_path: Path) ->
         validate_release(TAG, Path("pyproject.toml"), dist, None)
 
 
-def test_sdist_hatch_policy_excludes_only_internal_plans_from_public_docs() -> None:
+def test_release_validation_rejects_runtime_paths_in_sdist(tmp_path: Path) -> None:
+    dist = tmp_path / "dist"
+    _distributions(dist, forbidden_sdist_path="runs/private-run/metrics.json")
+
+    with pytest.raises(ReleaseValidationError, match="forbidden runtime paths"):
+        validate_release(TAG, Path("pyproject.toml"), dist, None)
+
+
+def test_sdist_hatch_policy_declares_runtime_exclusions() -> None:
     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
 
     assert "[tool.hatch.build.targets.sdist]" in pyproject
-    assert 'exclude = ["/docs/superpowers/**"]' in pyproject
+    for exclusion in (
+        "/runs/**",
+        "/.cache/**",
+        "/data/raw/**",
+        "/artifacts/**",
+        "/.worktrees/**",
+        "/.superpowers/**",
+        "/site/**",
+        "/dist/**",
+        "/.coverage",
+        "/htmlcov/**",
+        "/docs/superpowers/**",
+    ):
+        assert f'"{exclusion}"' in pyproject
+
+
+def test_fresh_sdist_excludes_ignored_runtime_files_but_retains_public_sources(
+    tmp_path: Path,
+) -> None:
+    repository = Path(__file__).parents[1]
+    marker_name = f".climadc-packaging-test-{tmp_path.name}"
+    marker_directories = [
+        repository / "runs" / marker_name,
+        repository / ".cache" / marker_name,
+        repository / "data" / "raw" / marker_name,
+        repository / "artifacts" / marker_name,
+        repository / ".worktrees" / marker_name,
+        repository / ".superpowers" / marker_name,
+        repository / "site" / marker_name,
+        repository / "dist" / marker_name,
+        repository / "htmlcov" / marker_name,
+    ]
+    for directory in marker_directories:
+        directory.mkdir(parents=True, exist_ok=False)
+        (directory / "private-runtime.txt").write_text("must not ship\n", encoding="utf-8")
+
+    try:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "build",
+                "--sdist",
+                "--no-isolation",
+                "--outdir",
+                str(tmp_path),
+            ],
+            cwd=repository,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+        sdist = next(tmp_path.glob("*.tar.gz"))
+        root = sdist.name.removesuffix(".tar.gz")
+        with tarfile.open(sdist, mode="r:gz") as archive:
+            relatives = [
+                name.removeprefix(f"{root}/")
+                for name in archive.getnames()
+                if name.startswith(f"{root}/")
+            ]
+
+        forbidden_prefixes = (
+            "runs/",
+            ".cache/",
+            "data/raw/",
+            "artifacts/",
+            ".worktrees/",
+            ".superpowers/",
+            "site/",
+            "dist/",
+            "htmlcov/",
+            "docs/superpowers/",
+        )
+        forbidden = sorted(
+            relative
+            for relative in relatives
+            if any(relative.startswith(prefix) for prefix in forbidden_prefixes)
+            or relative == ".coverage"
+        )
+        assert forbidden == []
+        for required in (
+            "LICENSE",
+            "NOTICE",
+            "docs/index.md",
+            "examples/weatherdc_kasetsart/README.md",
+            "tests/test_package.py",
+            "tests/fixtures/weatherdc_small/PROVENANCE.yaml",
+        ):
+            assert required in relatives
+    finally:
+        for directory in marker_directories:
+            shutil.rmtree(directory)
 
 
 def test_release_workflow_passes_event_data_through_step_environment() -> None:
