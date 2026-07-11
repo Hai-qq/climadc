@@ -3,16 +3,17 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 import tempfile
 import uuid
 from datetime import timezone
-from html import unescape
 from html.parser import HTMLParser
 from math import isfinite
 from pathlib import Path
 from pathlib import PureWindowsPath
 from typing import Any, cast
 
+import numpy as np
 import pandas as pd
 import yaml
 
@@ -34,6 +35,7 @@ REQUIRED_ARTIFACTS = frozenset(
         "report.html",
     }
 )
+_SPLIT_COLUMNS = ("split_id", "partition", "position", "timestamp")
 
 
 def _json_default(value: object) -> object:
@@ -88,6 +90,57 @@ def _require_finite(value: object) -> None:
             _require_finite(nested)
 
 
+def _require_finite_column(
+    frame: pd.DataFrame,
+    column: str,
+    artifact: str,
+    *,
+    nullable: bool,
+) -> None:
+    series = frame[column]
+    if not pd.api.types.is_numeric_dtype(series.dtype):
+        raise ValueError(f"{artifact} column {column!r} must be numeric and finite")
+    if not nullable and bool(series.isna().any()):
+        raise ValueError(f"{artifact} column {column!r} must be finite and non-null")
+    present = series.dropna().to_numpy(dtype=float)
+    if not np.isfinite(present).all():
+        raise ValueError(f"{artifact} column {column!r} must contain only finite values")
+
+
+def _validate_splits_frame(frame: pd.DataFrame) -> None:
+    if list(frame.columns) != list(_SPLIT_COLUMNS):
+        raise ValueError(f"splits.parquet must have exact columns {list(_SPLIT_COLUMNS)}")
+    if frame.empty:
+        raise ValueError("splits.parquet must not be empty")
+    _require_finite_column(frame, "position", "splits.parquet", nullable=False)
+    if not pd.api.types.is_integer_dtype(frame["position"].dtype):
+        raise ValueError("splits.parquet column 'position' must have an integer dtype")
+    if bool((frame["position"] < 0).any()):
+        raise ValueError("splits.parquet column 'position' must be nonnegative")
+    for column in ("split_id", "partition"):
+        invalid = frame[column].map(lambda value: not isinstance(value, str) or not value)
+        if bool(invalid.any()):
+            raise ValueError(f"splits.parquet column {column!r} must contain non-empty strings")
+    if not set(frame["partition"]).issubset({"train", "gap", "calibration", "test"}):
+        raise ValueError("splits.parquet contains an invalid partition label")
+    dtype = frame["timestamp"].dtype
+    if (
+        not isinstance(dtype, pd.DatetimeTZDtype)
+        or str(dtype.tz) != "UTC"
+        or bool(frame["timestamp"].isna().any())
+    ):
+        raise ValueError("splits.parquet timestamp must contain non-null exact UTC timestamps")
+
+
+def _validate_predictions_frame(frame: pd.DataFrame) -> None:
+    if list(frame.columns) != list(PREDICTION_COLUMNS):
+        raise ValueError(f"predictions.parquet must have exact columns {list(PREDICTION_COLUMNS)}")
+    if frame.empty:
+        raise ValueError("predictions.parquet must not be empty")
+    _require_finite_column(frame, "value", "predictions.parquet", nullable=False)
+    _require_finite_column(frame, "quantile", "predictions.parquet", nullable=True)
+
+
 class _ArtifactHTMLParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
@@ -117,24 +170,40 @@ def _direct_child_name(target: str) -> str:
     return target
 
 
+def _absolute(path: Path) -> Path:
+    return Path(os.path.abspath(path))
+
+
+def _is_reparse_point(status: os.stat_result) -> bool:
+    attributes = int(getattr(status, "st_file_attributes", 0))
+    flag = int(getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+    return bool(attributes & flag)
+
+
+def _require_real_directory(path: Path) -> None:
+    try:
+        status = os.lstat(path)
+    except OSError as exc:
+        raise ConfigurationError(f"Run target must be an existing real directory: {path}") from exc
+    if not stat.S_ISDIR(status.st_mode) or _is_reparse_point(status):
+        raise ConfigurationError(f"Run target must be a real directory, not a link: {path}")
+
+
 def _require_direct_child(runs_dir: Path, run_path: Path) -> tuple[Path, str]:
-    parent = runs_dir.resolve()
-    candidate = run_path if run_path.is_absolute() else run_path.resolve()
+    parent = _absolute(runs_dir)
+    candidate = _absolute(run_path)
     name = _direct_child_name(candidate.name)
-    if run_path.parent.resolve() != parent or not candidate.is_dir():
+    if candidate.parent != parent:
         raise ConfigurationError("Run path must be an existing direct child of runs directory")
-    resolved = candidate.resolve()
-    if resolved.parent != parent:
-        raise ConfigurationError("Run path must resolve to a direct child of runs directory")
-    return resolved, name
+    _require_real_directory(candidate)
+    return candidate, name
 
 
 def _resolve_direct_child(parent: Path, target: str) -> Path:
     name = _direct_child_name(target)
-    candidate = parent / name
-    if not candidate.is_dir() or candidate.resolve().parent != parent.resolve():
-        raise ConfigurationError("Run pointer target must resolve to an existing direct child")
-    return candidate.resolve()
+    candidate = _absolute(parent) / name
+    _require_real_directory(candidate)
+    return candidate
 
 
 def update_latest_pointer(
@@ -167,14 +236,18 @@ def update_latest_pointer(
 def resolve_run_path(path: Path, *, windows: bool | None = None) -> Path:
     """Resolve an actual run directory, POSIX symlink, or Windows text pointer."""
 
-    pointer = Path(path)
+    pointer = _absolute(Path(path))
     windows = os.name == "nt" if windows is None else windows
-    if pointer.is_dir() and not pointer.is_symlink():
-        return pointer.resolve()
+    try:
+        pointer_status = os.lstat(pointer)
+    except OSError as exc:
+        raise ConfigurationError(f"Run path does not exist: {pointer}") from exc
+    if stat.S_ISDIR(pointer_status.st_mode) and not _is_reparse_point(pointer_status):
+        return pointer
     if windows:
-        if pointer.is_symlink():
+        if stat.S_ISLNK(pointer_status.st_mode) or _is_reparse_point(pointer_status):
             raise ConfigurationError("Windows text run pointer required; symlink rejected")
-        if not pointer.is_file():
+        if not stat.S_ISREG(pointer_status.st_mode):
             raise ConfigurationError(f"Run path does not exist: {pointer}")
         try:
             raw_target = pointer.read_text(encoding="utf-8")
@@ -184,8 +257,8 @@ def resolve_run_path(path: Path, *, windows: bool | None = None) -> Path:
         if len(lines) != 1 or lines[0] != lines[0].strip() or not lines[0]:
             raise ConfigurationError(f"Run pointer is empty: {pointer}")
         return _resolve_direct_child(pointer.parent, lines[0])
-    if not pointer.is_symlink():
-        if pointer.is_file():
+    if not stat.S_ISLNK(pointer_status.st_mode):
+        if stat.S_ISREG(pointer_status.st_mode):
             raise ConfigurationError("POSIX symlink run pointer required; text pointer rejected")
         raise ConfigurationError(f"Run path does not exist: {pointer}")
     try:
@@ -198,16 +271,18 @@ def resolve_run_path(path: Path, *, windows: bool | None = None) -> Path:
 def _dataset_cards_markdown(result: RunResult) -> str:
     sections = ["# Dataset cards", ""]
     for card in result.dataset_cards:
+        payload = yaml.safe_dump(
+            card.model_dump(mode="json"),
+            sort_keys=True,
+            allow_unicode=False,
+        ).rstrip()
         sections.extend(
             [
                 f"## {card.name}",
                 "",
-                f"- Site: `{card.site.site_id}`",
-                f"- Provider: {card.source.provider}",
-                f"- License: `{card.source.license}`",
-                f"- Source: {card.source.url}",
-                f"- SHA-256: `{card.sha256}`",
-                f"- Schema version: `{card.schema_version}`",
+                "```yaml",
+                payload,
+                "```",
                 "",
             ]
         )
@@ -216,6 +291,9 @@ def _dataset_cards_markdown(result: RunResult) -> str:
 
 class ArtifactWriter:
     def _write_payloads(self, directory: Path, result: RunResult, run_id: str) -> None:
+        _validate_splits_frame(result.splits)
+        prediction_frame = result.predictions.to_pandas()
+        _validate_predictions_frame(prediction_frame)
         started_at = result.started_at.isoformat()
         run_manifest: dict[str, Any] = {
             "run_id": run_id,
@@ -231,7 +309,6 @@ class ArtifactWriter:
             encoding="utf-8",
             newline="\n",
         )
-        prediction_frame = result.predictions.to_pandas()
         lineage = {
             "run_id": run_id,
             "study_id": result.study_id,
@@ -285,6 +362,8 @@ class ArtifactWriter:
             leakage = _load_json(directory / "leakage-report.json")
             splits = pd.read_parquet(directory / "splits.parquet")
             predictions = pd.read_parquet(directory / "predictions.parquet")
+            _validate_splits_frame(splits)
+            _validate_predictions_frame(predictions)
             cards = (directory / "dataset-card.md").read_text(encoding="utf-8")
             report = (directory / "report.html").read_text(encoding="utf-8")
 
@@ -335,21 +414,15 @@ class ArtifactWriter:
                 result.predictions.to_pandas().reset_index(drop=True),
                 check_dtype=True,
             )
-            if not cards.startswith("# Dataset cards\n") or cards.count("\n## ") != len(
-                result.dataset_cards
-            ):
-                raise ValueError("dataset-card.md has invalid section structure")
-            for card in result.dataset_cards:
-                if card.sha256 not in cards or card.source.url not in cards:
-                    raise ValueError("dataset-card.md is missing exact card provenance")
+            if cards != _dataset_cards_markdown(result):
+                raise ValueError("dataset-card.md does not match frozen DatasetCard semantics")
             parser = _ArtifactHTMLParser()
             parser.feed(report)
             parser.close()
             if not {"html", "body", "h1", "pre"}.issubset(parser.tags) or "script" in parser.tags:
                 raise ValueError("report.html has invalid document structure")
-            visible_report = unescape(report)
-            if run_id not in visible_report or result.study_id not in visible_report:
-                raise ValueError("report.html is missing run identity")
+            if report != render_report(result, run_id):
+                raise ValueError("report.html does not match frozen RunResult semantics")
             for path in directory.iterdir():
                 if path.suffix in {".yaml", ".json", ".md", ".html"}:
                     text = path.read_text(encoding="utf-8")
@@ -383,7 +456,7 @@ class ArtifactWriter:
             temporary.rename(final)
             published = True
             update_latest_pointer(output_dir, final)
-            return final.resolve()
+            return _absolute(final)
         except ConfigurationError:
             if published and final.exists():
                 shutil.rmtree(final)

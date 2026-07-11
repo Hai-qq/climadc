@@ -42,7 +42,21 @@ _ALPHA = 0.2
 def _deep_copy_frame(frame: pd.DataFrame) -> pd.DataFrame:
     copied: pd.DataFrame = frame.copy(deep=True)
     for position, dtype in enumerate(frame.dtypes):
-        if pd.api.types.is_object_dtype(dtype):
+        if isinstance(dtype, pd.CategoricalDtype):
+            categorical = pd.Categorical(frame.iloc[:, position])
+            categories = pd.Index(
+                [deepcopy(value) for value in categorical.categories],
+                dtype=categorical.categories.dtype,
+                name=deepcopy(categorical.categories.name),
+                tupleize_cols=False,
+            )
+            categorical_values = pd.Categorical.from_codes(
+                categorical.codes.copy(),
+                categories=categories,
+                ordered=categorical.ordered,
+            )
+            copied.isetitem(position, pd.Series(categorical_values, index=copied.index))
+        elif pd.api.types.is_object_dtype(dtype):
             values = [deepcopy(value) for value in frame.iloc[:, position].tolist()]
             copied.isetitem(position, pd.Series(values, index=frame.index, dtype=object))
     return copied
@@ -226,12 +240,25 @@ class BenchmarkRunner:
         causal_splits: list[tuple[str, TemporalSplit]] = []
         for _, split in splits:
             earliest_origin = times[split.calibration[0]] - horizon
-            candidates = telemetry.loc[
-                (telemetry["event_time"] <= earliest_origin)
-                & (telemetry["available_at"] <= earliest_origin)
-                & (telemetry["metric"].isin(configured_targets))
-            ]
-            legal_times = set(candidates["event_time"].tolist())
+            candidate_times = times[split.train]
+            legal_by_target: list[set[pd.Timestamp]] = []
+            for target in configured_targets:
+                target_rows = telemetry.loc[
+                    (telemetry["metric"] == target)
+                    & (telemetry["quality"] == "observed")
+                    & (telemetry["event_time"].isin(candidate_times))
+                    & (telemetry["event_time"] <= earliest_origin)
+                ]
+                counts = target_rows.groupby("event_time", sort=False).size()
+                duplicate_times = counts.loc[counts > 1]
+                if not duplicate_times.empty:
+                    raise ConfigurationError(
+                        f"Configured target {target!r} has duplicate observed target rows "
+                        "at a causal training timestamp"
+                    )
+                legal_rows = target_rows.loc[target_rows["available_at"] <= earliest_origin]
+                legal_by_target.append(set(legal_rows["event_time"].tolist()))
+            legal_times = set.intersection(*legal_by_target)
             train = np.asarray(
                 [position for position in split.train if times[int(position)] in legal_times],
                 dtype=np.int64,
@@ -416,6 +443,9 @@ class BenchmarkRunner:
     ) -> tuple[PredictionFrame, list[_SplitExecution]]:
         telemetry = data.telemetry.to_pandas()
         horizon = pd.Timedelta(config.horizon)
+        configured_targets = {
+            self._target_for(model_config, telemetry) for model_config in config.models
+        }
         frames: list[PredictionFrame] = []
         executions: list[_SplitExecution] = []
         for split_id, split in splits:
@@ -426,6 +456,8 @@ class BenchmarkRunner:
                 telemetry["event_time"].isin(train_times)
                 & (telemetry["event_time"] <= earliest_calibration_origin)
                 & (telemetry["available_at"] <= earliest_calibration_origin)
+                & (telemetry["quality"] == "observed")
+                & (telemetry["metric"].isin(configured_targets))
             ]
             history = self._history(train_rows)
             models: dict[str, Forecaster] = {}

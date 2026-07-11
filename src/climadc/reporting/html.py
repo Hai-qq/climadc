@@ -22,6 +22,13 @@ def render_report(result: RunResult, run_id: str) -> str:
     prediction_rows = len(result.predictions.to_pandas())
     split_ids = sorted(str(value) for value in result.splits["split_id"].unique())
     model_ids = sorted(str(value) for value in result.predictions.to_pandas()["model_id"].unique())
+    decision_state = (
+        "disabled"
+        if result.decision is None
+        else "feasible"
+        if result.decision.feasible
+        else "infeasible"
+    )
     return template.render(
         run_id=run_id,
         study_id=result.study_id,
@@ -32,5 +39,6 @@ def render_report(result: RunResult, run_id: str) -> str:
         model_ids=model_ids,
         accepted_rows=result.leakage_audit.accepted_rows,
         rejected_rows=result.leakage_audit.rejected_rows,
+        decision_state=decision_state,
         metrics_json=json.dumps(result.metrics, sort_keys=True, indent=2, allow_nan=False),
     )

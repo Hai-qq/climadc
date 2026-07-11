@@ -18,6 +18,17 @@ from climadc.errors import ConfigurationError
 from climadc.validation.leakage import LeakageAudit
 
 
+class _MutableHashable:
+    def __init__(self, label: str) -> None:
+        self.label = label
+
+    def __hash__(self) -> int:
+        return 1
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _MutableHashable) and self.label == other.label
+
+
 def _config(tmp_path: Path) -> StudyConfig:
     return StudyConfig.from_yaml(scaffold_study(tmp_path / "study"))
 
@@ -128,6 +139,49 @@ def test_split_train_labels_only_positions_used_by_configured_targets(tmp_path: 
 
     position_zero = result.splits.loc[result.splits["position"] == 0, "partition"]
     assert position_zero.tolist() == ["gap"]
+
+
+def test_shared_train_positions_are_intersection_across_configured_targets(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    telemetry = pd.read_csv(config.telemetry.path)
+    alternate = telemetry.iloc[2:].copy(deep=True)
+    alternate["device_id"] = "alternate-meter"
+    alternate["metric"] = "alternate_power"
+    pd.concat([telemetry, alternate], ignore_index=True).to_csv(config.telemetry.path, index=False)
+    _refresh_card_hash(config, "telemetry")
+    config = config.model_copy(
+        update={
+            "models": [
+                ModelConfig(
+                    kind="persistence",
+                    model_id="total",
+                    params={"target": "total_power"},
+                ),
+                ModelConfig(
+                    kind="persistence",
+                    model_id="alternate",
+                    params={"target": "alternate_power"},
+                ),
+            ]
+        }
+    )
+
+    with pytest.raises(ConfigurationError, match="insufficient causal training timestamps"):
+        BenchmarkRunner().run(config)
+
+
+def test_shared_train_positions_reject_duplicate_observed_target_rows(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    telemetry = pd.read_csv(config.telemetry.path)
+    duplicate = telemetry.iloc[[0]].copy(deep=True)
+    duplicate["device_id"] = "duplicate-meter"
+    pd.concat([telemetry, duplicate], ignore_index=True).to_csv(config.telemetry.path, index=False)
+    _refresh_card_hash(config, "telemetry")
+
+    with pytest.raises(ConfigurationError, match="duplicate observed target"):
+        BenchmarkRunner().run(config)
 
 
 def test_test_predictions_are_issued_only_after_safe_calibration_labels(tmp_path: Path) -> None:
@@ -421,3 +475,47 @@ def test_run_result_reconstructs_all_nested_inputs(tmp_path: Path) -> None:
     assert (result.decision.schedule["forecast_value"] >= 0).all()
     assert result.decision.schedule.loc[0, "metadata"] == {"value": 1}
     assert result.decision.metrics["baseline_peak"] != -999.0
+
+
+def test_run_result_deep_copies_categorical_categories_and_names(tmp_path: Path) -> None:
+    original = BenchmarkRunner().run(_config(tmp_path))
+    category = _MutableHashable("category-original")
+    category_name = _MutableHashable("name-original")
+    categories = pd.Index([category], dtype=object, name=category_name)
+
+    splits = original.splits.copy(deep=True)
+    splits.index = pd.Index([0] * len(splits), name="duplicate-index")
+    split_categorical = pd.Categorical.from_codes(
+        [0] * len(splits), categories=categories, ordered=True
+    )
+    splits.insert(len(splits.columns), "category", split_categorical)
+    splits.insert(len(splits.columns), "category", split_categorical, allow_duplicates=True)
+
+    schedule = original.decision.schedule.copy(deep=True)
+    schedule.index = pd.Index([0] * len(schedule), name="duplicate-index")
+    schedule_categorical = pd.Categorical.from_codes(
+        [0] * len(schedule), categories=categories, ordered=True
+    )
+    schedule.insert(len(schedule.columns), "category", schedule_categorical)
+    schedule.insert(len(schedule.columns), "category", schedule_categorical, allow_duplicates=True)
+    decision = DecisionResult(
+        schedule=schedule,
+        feasible=original.decision.feasible,
+        violations=original.decision.violations,
+        metrics=original.decision.metrics,
+    )
+    result = replace(original, splits=splits, decision=decision)
+
+    category.label = "category-mutated"
+    category_name.label = "name-mutated"
+
+    assert result.splits.columns.tolist() == splits.columns.tolist()
+    assert result.splits.index.equals(splits.index)
+    assert result.decision.schedule.columns.tolist() == schedule.columns.tolist()
+    assert result.decision.schedule.index.equals(schedule.index)
+    for frame in (result.splits, result.decision.schedule):
+        for position in (-2, -1):
+            categorical = frame.iloc[:, position].array
+            assert categorical.ordered is True
+            assert categorical.categories[0].label == "category-original"
+            assert categorical.categories.name.label == "name-original"
