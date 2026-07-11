@@ -11,11 +11,11 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_xarray_tests_skip_collection_when_optional_dependency_is_missing(
-    tmp_path: Path,
-) -> None:
+def _collect_xarray_tests_with_failed_import(
+    tmp_path: Path, *, missing_module: str
+) -> subprocess.CompletedProcess[str]:
     (tmp_path / "sitecustomize.py").write_text(
-        """
+        f"""
 import importlib.abc
 import sys
 
@@ -23,7 +23,9 @@ import sys
 class BlockXarray(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path, target=None):
         if fullname == "xarray" or fullname.startswith("xarray."):
-            raise ModuleNotFoundError("No module named 'xarray'", name="xarray")
+            raise ModuleNotFoundError(
+                "No module named '{missing_module}'", name="{missing_module}"
+            )
         return None
 
 
@@ -34,7 +36,7 @@ sys.meta_path.insert(0, BlockXarray())
     env = os.environ.copy()
     env["PYTHONPATH"] = os.pathsep.join(filter(None, (str(tmp_path), env.get("PYTHONPATH", ""))))
 
-    result = subprocess.run(
+    return subprocess.run(
         [
             sys.executable,
             "-m",
@@ -51,10 +53,25 @@ sys.meta_path.insert(0, BlockXarray())
         check=False,
     )
 
+
+def test_xarray_tests_skip_collection_when_optional_dependency_is_missing(
+    tmp_path: Path,
+) -> None:
+    result = _collect_xarray_tests_with_failed_import(tmp_path, missing_module="xarray")
     output = result.stdout + result.stderr
     assert result.returncode in {0, 5}, output
     assert "skipped" in output.lower()
     assert "error" not in output.lower()
+
+
+def test_xarray_tests_expose_broken_transitive_dependency(tmp_path: Path) -> None:
+    result = _collect_xarray_tests_with_failed_import(tmp_path, missing_module="broken_dependency")
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 2, output
+    assert "broken_dependency" in output
+    assert "error collecting" in output.lower()
+    assert "skipped" not in output.lower()
 
 
 def test_quality_job_installs_optional_xarray_with_ci_numpy_constraint() -> None:

@@ -8,7 +8,12 @@ import pytest
 from climadc.adapters.xarray import climate_from_xarray
 from climadc.errors import ConfigurationError
 
-xr = pytest.importorskip("xarray")
+try:
+    import xarray as xr
+except ModuleNotFoundError as exc:
+    if exc.name != "xarray":
+        raise
+    pytest.skip("optional dependency xarray is not installed", allow_module_level=True)
 
 
 def _dataset(*, timezone: str | None = "Asia/Shanghai") -> xr.Dataset:
