@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
+from pathlib import PurePosixPath
 import shutil
 import subprocess
 import sys
@@ -103,6 +104,28 @@ def test_release_validation_rejects_runtime_paths_in_sdist(tmp_path: Path) -> No
         validate_release(TAG, Path("pyproject.toml"), dist, None)
 
 
+@pytest.mark.parametrize(
+    "forbidden_path",
+    [
+        "climadc.egg-info/PKG-INFO",
+        "nested/pkg.egg-info/file",
+        "module.pyc",
+        "module.pyo",
+        "module.pyd",
+        "__pycache__/module.pyc",
+    ],
+)
+def test_release_validation_rejects_python_build_residue(
+    tmp_path: Path,
+    forbidden_path: str,
+) -> None:
+    dist = tmp_path / "dist"
+    _distributions(dist, forbidden_sdist_path=forbidden_path)
+
+    with pytest.raises(ReleaseValidationError, match="forbidden runtime paths"):
+        validate_release(TAG, Path("pyproject.toml"), dist, None)
+
+
 def test_sdist_hatch_policy_declares_runtime_exclusions() -> None:
     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
 
@@ -119,6 +142,8 @@ def test_sdist_hatch_policy_declares_runtime_exclusions() -> None:
         "/.coverage",
         "/htmlcov/**",
         "/docs/superpowers/**",
+        "/**/*.egg-info/**",
+        "/**/*.py[cod]",
     ):
         assert f'"{exclusion}"' in pyproject
 
@@ -142,6 +167,12 @@ def test_fresh_sdist_excludes_ignored_runtime_files_but_retains_public_sources(
     for directory in marker_directories:
         directory.mkdir(parents=True, exist_ok=False)
         (directory / "private-runtime.txt").write_text("must not ship\n", encoding="utf-8")
+    residue_directory = repository / f"{marker_name}.egg-info"
+    residue_directory.mkdir(exist_ok=False)
+    (residue_directory / "PKG-INFO").write_text("must not ship\n", encoding="utf-8")
+    residue_files = [repository / f"{marker_name}{suffix}" for suffix in (".pyc", ".pyo", ".pyd")]
+    for residue_file in residue_files:
+        residue_file.write_bytes(b"must not ship\n")
 
     try:
         completed = subprocess.run(
@@ -187,6 +218,8 @@ def test_fresh_sdist_excludes_ignored_runtime_files_but_retains_public_sources(
             for relative in relatives
             if any(relative.startswith(prefix) for prefix in forbidden_prefixes)
             or relative == ".coverage"
+            or any(part.endswith(".egg-info") for part in PurePosixPath(relative).parts)
+            or PurePosixPath(relative).suffix in {".pyc", ".pyo", ".pyd"}
         )
         assert forbidden == []
         for required in (
@@ -201,6 +234,9 @@ def test_fresh_sdist_excludes_ignored_runtime_files_but_retains_public_sources(
     finally:
         for directory in marker_directories:
             shutil.rmtree(directory)
+        shutil.rmtree(residue_directory)
+        for residue_file in residue_files:
+            residue_file.unlink()
 
 
 def test_release_workflow_passes_event_data_through_step_environment() -> None:

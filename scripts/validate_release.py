@@ -4,6 +4,7 @@ import argparse
 from email.parser import BytesParser
 from email.policy import default
 from pathlib import Path
+from pathlib import PurePosixPath
 import re
 import tarfile
 import zipfile
@@ -38,6 +39,16 @@ _FORBIDDEN_SDIST_PREFIXES = (
     "runs/",
     "site/",
 )
+_PYTHON_BUILD_SUFFIXES = frozenset({".pyc", ".pyd", ".pyo"})
+
+
+def _is_python_build_residue(name: str) -> bool:
+    path = PurePosixPath(name)
+    return (
+        "__pycache__" in path.parts
+        or any(part.endswith(".egg-info") for part in path.parts)
+        or path.suffix in _PYTHON_BUILD_SUFFIXES
+    )
 
 
 def _project_identity(path: Path) -> tuple[str, str]:
@@ -175,7 +186,7 @@ def _validate_sdist(path: Path, identity: tuple[str, str]) -> None:
                 if any(name.startswith(prefix) for prefix in _FORBIDDEN_SDIST_PREFIXES)
                 or name == ".coverage"
                 or name.startswith(".coverage.")
-                or "/__pycache__/" in f"/{name}"
+                or _is_python_build_residue(name)
             )
             if forbidden:
                 raise ReleaseValidationError(f"Sdist contains forbidden runtime paths: {forbidden}")

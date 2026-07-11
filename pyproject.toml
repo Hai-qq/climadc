@@ -64,6 +64,8 @@ exclude = [
   "/.venv/**",
   "/.worktrees/**",
   "/**/__pycache__/**",
+  "/**/*.egg-info/**",
+  "/**/*.py[cod]",
   "/artifacts/**",
   "/build/**",
   "/data/raw/**",
