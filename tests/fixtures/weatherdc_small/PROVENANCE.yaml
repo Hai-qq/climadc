@@ -1,0 +1,12 @@
+name: ClimaDC WeatherDC small synthetic fixture
+creator: ClimaDC project
+license: CC0-1.0
+generated_by: generate_fixture.py
+source_data: none
+description: >-
+  Deterministic synthetic hourly weather forecasts, meter readings, and workload rows.
+  Values are generated from documented formulas and contain no records copied from WeatherDC,
+  energydata, HII, or any operational data center.
+forecast_semantics: >-
+  The synthetic weather batch was issued at 2025-12-30 00:00 Asia/Bangkok, before every
+  valid time in the fixture. This deliberately tests causal use of an already available forecast.

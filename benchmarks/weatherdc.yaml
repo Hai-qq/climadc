@@ -1,0 +1,48 @@
+study_id: weatherdc-kasetsart-reference
+horizon: 4h
+climate:
+  path: ../.cache/climadc/weatherdc/study/climate.csv
+  format: csv
+  timezone: UTC
+  card: ../.cache/climadc/weatherdc/study/climate-card.yaml
+  column_map: {}
+telemetry:
+  path: ../.cache/climadc/weatherdc/study/telemetry.csv
+  format: csv
+  timezone: UTC
+  card: ../.cache/climadc/weatherdc/study/telemetry-card.yaml
+  column_map: {}
+workload:
+  path: ../.cache/climadc/weatherdc/study/workload.csv
+  format: csv
+  timezone: UTC
+  card: ../.cache/climadc/weatherdc/study/workload-card.yaml
+  column_map: {}
+backtest:
+  strategy: blocked
+  min_train: 28
+  calibration_size: 8
+  test_size: 8
+  step: 8
+models:
+  - kind: persistence
+    model_id: persistence
+    params:
+      target: cooling_power
+  - kind: seasonal
+    model_id: seasonal
+    params:
+      target: cooling_power
+      period: 24h
+  - kind: linear
+    model_id: calendar-linear
+    params:
+      target: cooling_power
+      features: [hour, dayofweek, elapsed_hours]
+decision:
+  enabled: true
+  flexible_fraction: 0.5
+  max_shift_multiplier: 2.0
+  peak_penalty: 4.0
+  risk_penalty: 0.25
+output_dir: ../runs/weatherdc
