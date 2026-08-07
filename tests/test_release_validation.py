@@ -270,6 +270,7 @@ def test_fresh_sdist_excludes_ignored_runtime_files_but_retains_public_sources(
         )
         assert forbidden == []
         for required in (
+            ".gitattributes",
             "LICENSE",
             "NOTICE",
             "docs/index.md",

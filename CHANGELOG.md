@@ -52,6 +52,8 @@ The project follows [Semantic Versioning](https://semver.org/). Alpha APIs may c
 
 - Replay artifact validation now preserves nullable numeric semantics across Parquet round trips,
   so risk-enabled inputs with both point and quantile rows can publish the full artifact set.
+- Hash-bound reference fixtures now force LF checkout semantics so manifest validation remains
+  byte-identical on Windows, macOS, and Linux.
 
 ### Changed
 

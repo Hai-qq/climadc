@@ -27,6 +27,14 @@ DECISION = pd.Timestamp("2026-08-01T00:00:00Z")
 RETRIEVED = pd.Timestamp("2026-08-06T12:46:02Z")
 
 
+def test_hash_bound_reference_inputs_force_lf_checkouts() -> None:
+    attributes = (Path(__file__).parents[2] / ".gitattributes").read_text(encoding="utf-8")
+    rules = {line.strip() for line in attributes.splitlines() if not line.startswith("#")}
+
+    assert "src/climadc/reference/fixtures/gb_london_24h/*.csv text eol=lf" in rules
+    assert "src/climadc/reference/fixtures/gb_london_24h/*.yaml text eol=lf" in rules
+
+
 def _result():
     config = ReplayStudyConfig.from_yaml(packaged_study_path())
     return ReplayStudyRunner(clock=lambda: RETRIEVED).run(config)
