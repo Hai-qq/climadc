@@ -15,6 +15,7 @@ from climadc.adapters.openmeteo_history import OpenMeteoHistoryAdapter
 from climadc.cli.app import app
 from climadc.errors import ConfigurationError
 from climadc.reference import packaged_study_path, refresh_carbon_shift
+from climadc.reporting import resolve_run_path
 from climadc.replay import (
     ReplayArtifactWriter,
     ReplayStudyConfig,
@@ -170,7 +171,7 @@ def test_replay_artifacts_are_complete_reconstructible_and_self_contained(tmp_pa
     assert "No replay constraint violations were reported" in report
     assert "<script" not in report.lower()
     assert "<link" not in report.lower()
-    assert (tmp_path / "runs" / "latest").resolve() == run_path
+    assert resolve_run_path(tmp_path / "runs" / "latest") == run_path
 
 
 def test_cli_runs_packaged_and_generic_reference_replays(tmp_path: Path) -> None:

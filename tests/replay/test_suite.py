@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 from climadc.cli.app import app
 from climadc.errors import ConfigurationError
 from climadc.reference import packaged_study_path, packaged_suite_path
+from climadc.reporting import resolve_run_path
 from climadc.replay import (
     ReplaySuiteArtifactWriter,
     ReplaySuiteConfig,
@@ -237,9 +238,9 @@ def test_suite_artifacts_include_auditable_subruns(
     for scenario in index["scenarios"]:
         scenario_run = run_path / scenario["relative_run_path"]
         assert {path.name for path in scenario_run.iterdir()} == REPLAY_ARTIFACTS
-        assert (scenario_run.parent / "latest").resolve() == scenario_run
+        assert resolve_run_path(scenario_run.parent / "latest") == scenario_run
         assert f"{scenario['relative_run_path']}/report.html" in report
-    assert (tmp_path / "suite-runs" / "latest").resolve() == run_path
+    assert resolve_run_path(tmp_path / "suite-runs" / "latest") == run_path
 
 
 def test_cli_runs_packaged_and_generic_robustness_suites(tmp_path: Path) -> None:
