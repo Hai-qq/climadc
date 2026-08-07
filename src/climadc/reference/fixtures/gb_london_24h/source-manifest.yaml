@@ -8,8 +8,8 @@ records:
     provider: Open-Meteo
     request_url: https://previous-runs-api.open-meteo.com/v1/forecast?latitude=51.5074&longitude=-0.1278&start_date=2026-08-01&end_date=2026-08-01&hourly=temperature_2m_previous_day1&timezone=UTC
     retrieved_at: 2026-08-06T12:46:02Z
-    sha256: 41c3078e8e3f5d9847ce4d988995a8d54275529e815582c559c532aa588d298e
-    bytes: 3559
+    sha256: aec2c0a6a6ae292afe3ec69f5b3756153160e929de7e433c4714ccd05897beff
+    bytes: 3558
     license: CC BY 4.0
     attribution: Weather data by Open-Meteo.com
     provenance: external_derived
@@ -29,8 +29,8 @@ records:
     provider: Open-Meteo
     request_url: https://archive-api.open-meteo.com/v1/archive?latitude=51.5074&longitude=-0.1278&start_date=2026-08-01&end_date=2026-08-01&hourly=temperature_2m&timezone=UTC
     retrieved_at: 2026-08-06T12:46:02Z
-    sha256: 63f20c6624671ffa994531f26f2065011d2703028cbf18764bcba8e908b72c55
-    bytes: 2803
+    sha256: 4c853d7cff2376bd1e86d7f840aa90e71457e7cfa25ca04a6c2b30eb8d946441
+    bytes: 2802
     license: CC BY 4.0
     attribution: Weather data by Open-Meteo.com
     provenance: external_derived
@@ -50,8 +50,8 @@ records:
     provider: NESO Carbon Intensity API
     request_url: https://api.carbonintensity.org.uk/intensity/2026-08-01T00:00Z/2026-08-02T00:00Z
     retrieved_at: 2026-08-06T12:46:02Z
-    sha256: 8936f54259a5ce2f9dfe83413b6d5f3a74b2b17e38c6ea1df8b615234f0ab9f2
-    bytes: 14175
+    sha256: 0ddda011b3268f8eeb0e9ea3de785c4b181845f1a00ee2d90b5c53d40f59b4b8
+    bytes: 14174
     license: CC BY 4.0
     attribution: Carbon intensity data by National Energy System Operator
     provenance: external_derived
@@ -71,8 +71,8 @@ records:
     provider: NESO Carbon Intensity API
     request_url: https://api.carbonintensity.org.uk/intensity/2026-08-01T00:00Z/2026-08-02T00:00Z
     retrieved_at: 2026-08-06T12:46:02Z
-    sha256: 8936f54259a5ce2f9dfe83413b6d5f3a74b2b17e38c6ea1df8b615234f0ab9f2
-    bytes: 14175
+    sha256: 0ddda011b3268f8eeb0e9ea3de785c4b181845f1a00ee2d90b5c53d40f59b4b8
+    bytes: 14174
     license: CC BY 4.0
     attribution: Carbon intensity data by National Energy System Operator
     provenance: external_derived
@@ -91,8 +91,8 @@ records:
     provider: ClimaDC project fixture
     request_url: https://github.com/Hai-qq/climadc/tree/main/src/climadc/reference/fixtures/gb_london_24h
     retrieved_at: 2026-08-06T12:46:02Z
-    sha256: 8936f54259a5ce2f9dfe83413b6d5f3a74b2b17e38c6ea1df8b615234f0ab9f2
-    bytes: 14175
+    sha256: 0ddda011b3268f8eeb0e9ea3de785c4b181845f1a00ee2d90b5c53d40f59b4b8
+    bytes: 14174
     license: Apache-2.0
     attribution: ClimaDC project-owned deterministic scenario
     provenance: project_generated
@@ -110,8 +110,8 @@ records:
     provider: ClimaDC project fixture
     request_url: https://github.com/Hai-qq/climadc/tree/main/src/climadc/reference/fixtures/gb_london_24h
     retrieved_at: 2026-08-06T12:46:02Z
-    sha256: a5d241f6ae27b6c4df11f73896094a2e0b0afb1cd7d6ed62689386a931292915
-    bytes: 586
+    sha256: 53add7e8b53447a6969125d0e48d5042e8a43d424b80f5fdd1da7543846ae768
+    bytes: 585
     license: Apache-2.0
     attribution: ClimaDC project-owned deterministic scenario
     provenance: project_generated

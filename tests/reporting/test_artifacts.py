@@ -80,7 +80,7 @@ def test_artifact_writer_emits_exact_nonempty_set_and_relative_latest(tmp_path: 
     for payload in (run_manifest, lineage):
         assert payload["run_id"] == run_path.name
         assert payload["study_id"] == result.study_id
-        assert payload["climadc_version"] == "0.1.0a1"
+        assert payload["climadc_version"] == "0.2.0a1"
         assert payload["input_hashes"] == result.input_hashes
         assert payload["config"] == result.config_snapshot
         assert payload["started_at"] == result.started_at.isoformat()

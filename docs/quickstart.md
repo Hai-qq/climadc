@@ -4,7 +4,7 @@
 
 - Python 3.10, 3.11, 3.12, or 3.13.
 - Bash or Zsh for the tested five-command block. Windows users can use the PowerShell equivalent below.
-- An installed checkout: `python -m pip install -e .`. After the Alpha is published, `python -m pip install "climadc==0.1.0a1"` is equivalent.
+- An installed checkout: `python -m pip install -e .`. After the Alpha is published, `python -m pip install "climadc==0.2.0a1"` is equivalent.
 
 The built-in study is deterministic, project-owned synthetic data. It needs no API key or network access.
 

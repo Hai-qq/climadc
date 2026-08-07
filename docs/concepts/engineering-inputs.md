@@ -1,6 +1,6 @@
 # Engineering input contracts
 
-The unreleased v0.2 semantic spine adds strict inputs for grid signals and flexible batch work. The
+The v0.2 Alpha semantic spine adds strict inputs for grid signals and flexible batch work. The
 contracts are available through `climadc.contracts`; local CSV and Parquet readers are available
 through `climadc.adapters`. They are not consumed by the legacy v0.1 shadow scheduler yet.
 

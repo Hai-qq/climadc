@@ -6,7 +6,7 @@ ClimaDC 是一个防信息泄漏、契约优先的框架，用于气候感知的
 
 ## 快速开始
 
-前置条件：Python 3.10-3.13，以及兼容 POSIX 的 Shell（Bash 或 Zsh）。从源码检出安装 Alpha：`python -m pip install -e .`；发布后可使用 `python -m pip install "climadc==0.1.0a1"`。下面五条命令只生成确定性合成数据，不访问网络。
+前置条件：Python 3.10-3.13，以及兼容 POSIX 的 Shell（Bash 或 Zsh）。从源码检出安装 Alpha：`python -m pip install -e .`；发布后可使用 `python -m pip install "climadc==0.2.0a1"`。下面五条命令只生成确定性合成数据，不访问网络。
 
 ```bash
 export CLIMADC_STUDY="$(mktemp -d)/climadc-quickstart"
@@ -48,9 +48,9 @@ flowchart LR
 
 WeatherDC 完整模式仅完成经过校验的数据转换：上游 HII 行是观测，现有数据源也没有提供工作负载或控制数据。本 Alpha 没有运行或宣称完整 WeatherDC 重训练结果。
 
-## 尚未发布的 v0.2 工程回放
+## v0.2 Alpha 工程回放
 
-当前开发版本以向后兼容方式新增单窗口与滚动工程回放能力：
+v0.2 Alpha 以向后兼容方式新增单窗口与滚动工程回放能力：
 
 - `GridSignalFrame` 分离碳强度或电价的预测值与事后值，并校验因果时间和信号专属单位；
 - `FlexibleWorkloadFrame` 使用释放、可用、截止、能量、最大功率和优先级描述可抢占任务。
@@ -85,7 +85,7 @@ climadc report ./climadc-replay-suite-runs/latest
 
 ## 范围与非目标
 
-当前开发版本包含：
+v0.2 Alpha 包含：
 
 - 标准气象预报、数据中心遥测、工作负载和预测契约；
 - 基于 `available_at` 的泄漏审计，以及 blocked/rolling-origin 拆分；
@@ -98,7 +98,7 @@ Alpha 不包含在线推理、真实数据中心自动控制、Web Dashboard、K
 
 ## 集成与扩展边界
 
-当前开发版本已实现本地 CSV/Parquet、可选 Xarray 转换、Open-Meteo 当前/历史天气、NESO
+v0.2 Alpha 已实现本地 CSV/Parquet、可选 Xarray 转换、Open-Meteo 当前/历史天气、NESO
 英国全国碳强度，以及经过校验的 WeatherDC 源数据转换；还实现了不内置上游平台的 Prometheus/Kepler、Carbon Aware SDK 兼容与 SustainDC 评估只读适配器。用户模型、校准器和决策策略通过公开协议接入。Darts、NeuralForecast 与 Earth2Studio 仍是生态边界，不是已实现集成。
 
 ## 文档
@@ -118,7 +118,7 @@ Alpha 不包含在线推理、真实数据中心自动控制、Web Dashboard、K
 
 ## 引用
 
-ClimaDC Alpha 的软件引用版本为 `0.1.0-alpha.1`，对应 Python 包的 PEP 440 版本 `0.1.0a1`。请使用 [CITATION.cff](CITATION.cff) 中的仓库元数据引用。
+ClimaDC Alpha 的软件引用版本为 `0.2.0-alpha.1`，对应 Python 包的 PEP 440 版本 `0.2.0a1`。请使用 [CITATION.cff](CITATION.cff) 中的仓库元数据引用。
 
 ## 许可证
 

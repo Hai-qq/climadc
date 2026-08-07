@@ -1,6 +1,6 @@
 # 工程输入契约
 
-尚未发布的 v0.2 语义骨架新增了严格的电网信号和可延迟批任务输入。契约从 `climadc.contracts` 导出，本地 CSV/Parquet 读取器从 `climadc.adapters` 导出。旧版 v0.1 影子调度器尚未消费这些新契约。
+v0.2 Alpha 语义骨架新增了严格的电网信号和可延迟批任务输入。契约从 `climadc.contracts` 导出，本地 CSV/Parquet 读取器从 `climadc.adapters` 导出。旧版 v0.1 影子调度器尚未消费这些新契约。
 
 ## 电网信号
 

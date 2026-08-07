@@ -4,8 +4,8 @@ title: "ClimaDC software"
 type: software
 authors:
   - family-names: "Hai-qq"
-version: "0.1.0-alpha.1"
-date-released: 2026-07-11
+version: "0.2.0-alpha.1"
+date-released: 2026-08-07
 repository-code: "https://github.com/Hai-qq/climadc"
 url: "https://github.com/Hai-qq/climadc"
 license: Apache-2.0

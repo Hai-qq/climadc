@@ -6,6 +6,8 @@ The project follows [Semantic Versioning](https://semver.org/). Alpha APIs may c
 
 ## [Unreleased]
 
+## [0.2.0-alpha.1] - 2026-08-07
+
 ### Added
 
 - v0.2 engineering-replay design, delivery phases, and acceptance gates in English and Chinese.
@@ -72,4 +74,6 @@ The project follows [Semantic Versioning](https://semver.org/). Alpha APIs may c
 - Fully offline synthetic Quickstart and WeatherDC reference benchmark.
 - Verified conversion-only path for upstream WeatherDC/HII observations and meter streams.
 
+[Unreleased]: https://github.com/Hai-qq/climadc/compare/v0.2.0-alpha.1...HEAD
+[0.2.0-alpha.1]: https://github.com/Hai-qq/climadc/releases/tag/v0.2.0-alpha.1
 [0.1.0-alpha.1]: https://github.com/Hai-qq/climadc/releases/tag/v0.1.0-alpha.1

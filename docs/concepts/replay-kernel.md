@@ -1,6 +1,6 @@
 # Engineering replay kernel
 
-The unreleased v0.2 replay kernel turns the canonical engineering inputs into a constrained,
+The v0.2 Alpha replay kernel turns the canonical engineering inputs into a constrained,
 counterfactual comparison. It can solve one single-site decision window or repeatedly re-solve a
 rolling horizon, then settles every committed schedule against realized weather, energy price, and
 carbon intensity. It never sends a schedule to production infrastructure.

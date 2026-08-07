@@ -6,7 +6,7 @@ ClimaDC is a leakage-aware, contract-first framework for climate-aware data-cent
 
 ## Quickstart
 
-Prerequisites: Python 3.10-3.13 and a POSIX-compatible shell (Bash or Zsh). Install the Alpha from a checkout with `python -m pip install -e .`; after publication, use `python -m pip install "climadc==0.1.0a1"`. The five commands below create only deterministic synthetic data and do not use the network.
+Prerequisites: Python 3.10-3.13 and a POSIX-compatible shell (Bash or Zsh). Install the Alpha from a checkout with `python -m pip install -e .`; after publication, use `python -m pip install "climadc==0.2.0a1"`. The five commands below create only deterministic synthetic data and do not use the network.
 
 ```bash
 export CLIMADC_STUDY="$(mktemp -d)/climadc-quickstart"
@@ -48,9 +48,9 @@ The same run accepted 240 climate rows, rejected 0 rows in its leakage audit, an
 
 WeatherDC full mode is verified conversion-only: upstream HII rows are observations, and the available sources do not provide workload or control data. This Alpha did not run or claim a full WeatherDC retraining result.
 
-## Unreleased v0.2 engineering replay
+## v0.2 Alpha engineering replay
 
-The current development checkout adds backward-compatible single-window and rolling engineering
+The v0.2 Alpha adds backward-compatible single-window and rolling engineering
 replay:
 
 - `GridSignalFrame` separates forecast and realized carbon intensity or energy price, including causal timestamps and signal-specific units;
@@ -115,7 +115,7 @@ guarantee. See the [replay robustness suite guide](docs/concepts/robustness-suit
 
 ## Scope and non-goals
 
-The current development checkout includes:
+The v0.2 Alpha includes:
 
 - canonical climate forecast, DC telemetry, workload, and prediction contracts;
 - `available_at`-based leakage auditing and blocked/rolling-origin splits;
@@ -152,7 +152,7 @@ The documentation site can be checked locally with `mkdocs build --strict`.
 
 ## Citation
 
-ClimaDC Alpha uses the software citation version `0.1.0-alpha.1`; the Python package version is the PEP 440 equivalent `0.1.0a1`. Cite the repository metadata in [CITATION.cff](CITATION.cff).
+ClimaDC Alpha uses the software citation version `0.2.0-alpha.1`; the Python package version is the PEP 440 equivalent `0.2.0a1`. Cite the repository metadata in [CITATION.cff](CITATION.cff).
 
 ## License
 

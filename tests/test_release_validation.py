@@ -20,8 +20,8 @@ from scripts.validate_release import (
 )
 
 
-VERSION = "0.1.0a1"
-TAG = "v0.1.0-alpha.1"
+VERSION = "0.2.0a1"
+TAG = "v0.2.0-alpha.1"
 NAME = "climadc"
 
 
@@ -126,7 +126,7 @@ def test_release_validation_accepts_matching_tag_metadata_and_contents(tmp_path:
     version = validate_release(TAG, Path("pyproject.toml"), dist, github_output)
 
     assert version == VERSION
-    assert github_output.read_text(encoding="utf-8") == ("verified=true\npackage_version=0.1.0a1\n")
+    assert github_output.read_text(encoding="utf-8") == ("verified=true\npackage_version=0.2.0a1\n")
 
 
 def test_release_validation_rejects_arbitrary_tag_before_artifact_checks(tmp_path: Path) -> None:
