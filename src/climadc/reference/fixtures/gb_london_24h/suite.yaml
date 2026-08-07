@@ -1,0 +1,24 @@
+schema_version: "1"
+suite_id: gb-london-policy-sensitivity
+aggregation: equal_weight
+scenarios:
+  - scenario_id: balanced
+    description: Equal numeric cost and carbon weights with no demand charge
+    study: study.yaml
+  - scenario_id: cost-dominant
+    description: Joint objective sensitivity with carbon weight reduced to 0.1
+    study: study-cost-dominant.yaml
+  - scenario_id: carbon-dominant
+    description: Joint objective sensitivity with cost weight reduced to 0.1
+    study: study-carbon-dominant.yaml
+  - scenario_id: demand-charge
+    description: Balanced weights with a synthetic 0.25 GBP/kW peak charge
+    study: study-demand-charge.yaml
+assumptions:
+  purpose: Exercise policy sensitivity to declared objective and demand-charge assumptions
+  scenario_weighting: Equal weight; no scenario probabilities are claimed
+limitations:
+  - All four scenarios reuse one historical signal and workload snapshot, so this is sensitivity analysis rather than out-of-sample validation.
+  - Objective weights combine unlike quantities and must not be interpreted as exchange rates.
+  - The synthetic tariff, workload, and demand charge do not establish production savings.
+output_dir: replay-suite-runs

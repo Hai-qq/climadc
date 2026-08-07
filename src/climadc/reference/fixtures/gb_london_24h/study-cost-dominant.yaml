@@ -1,0 +1,36 @@
+schema_version: "1"
+study_id: gb-london-carbon-shift-24h
+decision_time: 2026-08-01T00:00:00Z
+inputs:
+  climate_forecast: {path: climate-forecast.csv, format: csv, timezone: UTC}
+  actual_weather: {path: actual-weather.csv, format: csv, timezone: UTC}
+  grid_signals: {path: grid-signals.csv, format: csv, timezone: UTC}
+  workload: {path: workload.csv, format: csv, timezone: UTC}
+source_manifest: source-manifest.yaml
+replay:
+  site_id: gb-london-reference
+  horizon: 24h
+  interval: 1h
+  it_capacity_kw: 500
+  fixed_it_power_kw: 300
+  cost_weight: 1
+  carbon_weight: 0.1
+  demand_charge_per_kw: 0
+  tolerance_kwh: 1.0e-7
+facility_model:
+  kind: temperature_sensitive_pue
+  reference_temperature_c: 18
+  base_pue: 1.20
+  slope_per_degree_c: 0.015
+  min_pue: 1.10
+  max_pue: 1.80
+assumptions:
+  location: London, United Kingdom
+  scenario_variant: Cost-dominant joint objective sensitivity
+  tariff: Declared time-of-use scenario; not a supplier tariff or observed bill
+  workload: Deterministic project-owned batch-job fixture
+limitations:
+  - This scenario reuses one historical signal and workload snapshot; it is not an independent sample.
+  - Objective weights combine unlike quantities and are sensitivity parameters, not currency conversion factors.
+  - The tariff and workload are synthetic scenario inputs, so results are not production savings.
+output_dir: replay-runs

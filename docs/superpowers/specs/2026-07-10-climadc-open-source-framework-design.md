@@ -1,7 +1,8 @@
 # ClimaDC 开源框架设计规范
 
 - 日期：2026-07-10
-- 状态：待书面审阅
+- 状态：历史设计快照；现行能力与边界以 `README.md` 和
+  `docs/design/v0.2-engineering-replay.md` 为准，不再作为待审事项
 - 许可证：Apache License 2.0
 - 计划仓库：`Hai-qq/climadc`
 - 计划 Python 包：`climadc`

@@ -1,0 +1,124 @@
+schema_version: "1"
+study_id: gb-london-carbon-shift-24h
+records:
+  - source_id: open-meteo-weather-forecast
+    artifact: climate-forecast.csv
+    selection: variable=air_temperature; quality=24h fixed-lead forecast
+    role: issued weather forecast used by scheduling policies
+    provider: Open-Meteo
+    request_url: https://previous-runs-api.open-meteo.com/v1/forecast?latitude=51.5074&longitude=-0.1278&start_date=2026-08-01&end_date=2026-08-01&hourly=temperature_2m_previous_day1&timezone=UTC
+    retrieved_at: 2026-08-06T12:46:02Z
+    sha256: 41c3078e8e3f5d9847ce4d988995a8d54275529e815582c559c532aa588d298e
+    bytes: 3559
+    license: CC BY 4.0
+    attribution: Weather data by Open-Meteo.com
+    provenance: external_derived
+    transformations:
+      - Selected temperature_2m_previous_day1 for a fixed 24-hour lead.
+      - Renamed the variable to air_temperature and normalized timestamps to UTC.
+    timing:
+      issue_time_basis: provider
+      availability_basis: scenario_assumption
+      note: The previous_day1 suffix establishes a 24-hour lead, but the historical response does not contain an observed retrieval or availability timestamp; the decision-time freeze is declared by the scenario.
+    limitations:
+      - Forecast values are gridded model output at the provider-selected grid cell, not a site sensor.
+  - source_id: open-meteo-weather-settlement
+    artifact: actual-weather.csv
+    selection: metric=air_temperature; quality=estimated
+    role: post-horizon weather used for counterfactual settlement
+    provider: Open-Meteo
+    request_url: https://archive-api.open-meteo.com/v1/archive?latitude=51.5074&longitude=-0.1278&start_date=2026-08-01&end_date=2026-08-01&hourly=temperature_2m&timezone=UTC
+    retrieved_at: 2026-08-06T12:46:02Z
+    sha256: 63f20c6624671ffa994531f26f2065011d2703028cbf18764bcba8e908b72c55
+    bytes: 2803
+    license: CC BY 4.0
+    attribution: Weather data by Open-Meteo.com
+    provenance: external_derived
+    transformations:
+      - Selected hourly temperature_2m and renamed it to air_temperature.
+      - Marked values as estimated because they are gridded model or reanalysis output.
+    timing:
+      issue_time_basis: not_applicable
+      availability_basis: retrieval
+      note: Realized rows become available only at the recorded post-horizon retrieval time.
+    limitations:
+      - These are gridded historical model estimates, not measured London data-center telemetry.
+  - source_id: neso-carbon-forecast
+    artifact: grid-signals.csv
+    selection: signal=carbon_intensity; quality=forecast
+    role: national GB carbon forecast used by scheduling policies
+    provider: NESO Carbon Intensity API
+    request_url: https://api.carbonintensity.org.uk/intensity/2026-08-01T00:00Z/2026-08-02T00:00Z
+    retrieved_at: 2026-08-06T12:46:02Z
+    sha256: 8936f54259a5ce2f9dfe83413b6d5f3a74b2b17e38c6ea1df8b615234f0ab9f2
+    bytes: 14175
+    license: CC BY 4.0
+    attribution: Carbon intensity data by National Energy System Operator
+    provenance: external_derived
+    transformations:
+      - Averaged each pair of national half-hour forecast values into one hourly value.
+      - Preserved the provider unit gCO2e per kWh.
+    timing:
+      issue_time_basis: scenario_assumption
+      availability_basis: scenario_assumption
+      note: The historical response contains forecast values but omits their original issue and retrieval timestamps; both are frozen at the scenario decision time and must not be treated as measured provenance.
+    limitations:
+      - The national GB forecast is applied to a London site and does not resolve regional variation.
+  - source_id: neso-carbon-estimated-actual
+    artifact: grid-signals.csv
+    selection: signal=carbon_intensity; quality=estimated
+    role: national GB estimated actual carbon intensity used for settlement
+    provider: NESO Carbon Intensity API
+    request_url: https://api.carbonintensity.org.uk/intensity/2026-08-01T00:00Z/2026-08-02T00:00Z
+    retrieved_at: 2026-08-06T12:46:02Z
+    sha256: 8936f54259a5ce2f9dfe83413b6d5f3a74b2b17e38c6ea1df8b615234f0ab9f2
+    bytes: 14175
+    license: CC BY 4.0
+    attribution: Carbon intensity data by National Energy System Operator
+    provenance: external_derived
+    transformations:
+      - Averaged each pair of national half-hour estimated actual values into one hourly value.
+    timing:
+      issue_time_basis: not_applicable
+      availability_basis: retrieval
+      note: Estimated actual rows are settlement-only and become available at the recorded post-horizon retrieval time.
+    limitations:
+      - Provider actual values are estimates rather than metered site emissions.
+  - source_id: declared-scenario-tariff
+    artifact: grid-signals.csv
+    selection: signal=energy_price; forecast and estimated settlement rows
+    role: deterministic time-of-use price scenario
+    provider: ClimaDC project fixture
+    request_url: https://github.com/Hai-qq/climadc/tree/main/src/climadc/reference/fixtures/gb_london_24h
+    retrieved_at: 2026-08-06T12:46:02Z
+    sha256: 8936f54259a5ce2f9dfe83413b6d5f3a74b2b17e38c6ea1df8b615234f0ab9f2
+    bytes: 14175
+    license: Apache-2.0
+    attribution: ClimaDC project-owned deterministic scenario
+    provenance: project_generated
+    transformations: []
+    timing:
+      issue_time_basis: scenario_assumption
+      availability_basis: scenario_assumption
+      note: Forecast and settlement tariff values are deliberately identical and declared by the scenario.
+    limitations:
+      - The tariff is not a supplier product, market settlement series, or observed electricity bill.
+  - source_id: deterministic-workload
+    artifact: workload.csv
+    selection: all rows
+    role: deadline-constrained batch workload scenario
+    provider: ClimaDC project fixture
+    request_url: https://github.com/Hai-qq/climadc/tree/main/src/climadc/reference/fixtures/gb_london_24h
+    retrieved_at: 2026-08-06T12:46:02Z
+    sha256: a5d241f6ae27b6c4df11f73896094a2e0b0afb1cd7d6ed62689386a931292915
+    bytes: 586
+    license: Apache-2.0
+    attribution: ClimaDC project-owned deterministic scenario
+    provenance: project_generated
+    transformations: []
+    timing:
+      issue_time_basis: not_applicable
+      availability_basis: scenario_assumption
+      note: All jobs are deliberately available at the replay decision time.
+    limitations:
+      - Jobs are synthetic and do not represent production workload traces.

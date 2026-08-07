@@ -227,6 +227,7 @@ def test_fresh_sdist_excludes_ignored_runtime_files_but_retains_public_sources(
                 "-m",
                 "build",
                 "--sdist",
+                "--wheel",
                 "--no-isolation",
                 "--outdir",
                 str(tmp_path),
@@ -273,10 +274,34 @@ def test_fresh_sdist_excludes_ignored_runtime_files_but_retains_public_sources(
             "NOTICE",
             "docs/index.md",
             "examples/weatherdc_kasetsart/README.md",
+            "src/climadc/reference/fixtures/gb_london_24h/study.yaml",
+            "src/climadc/reference/fixtures/gb_london_24h/suite.yaml",
+            "src/climadc/reference/fixtures/gb_london_24h/study-cost-dominant.yaml",
+            "src/climadc/reference/fixtures/gb_london_24h/study-carbon-dominant.yaml",
+            "src/climadc/reference/fixtures/gb_london_24h/study-demand-charge.yaml",
+            "src/climadc/reference/fixtures/gb_london_24h/source-manifest.yaml",
+            "src/climadc/reference/fixtures/gb_london_24h/grid-signals.csv",
             "tests/test_package.py",
             "tests/fixtures/weatherdc_small/PROVENANCE.yaml",
         ):
             assert required in relatives
+
+        wheel = next(tmp_path.glob("*.whl"))
+        with zipfile.ZipFile(wheel) as archive:
+            wheel_members = set(archive.namelist())
+        for required in (
+            "climadc/reference/fixtures/gb_london_24h/study.yaml",
+            "climadc/reference/fixtures/gb_london_24h/suite.yaml",
+            "climadc/reference/fixtures/gb_london_24h/study-cost-dominant.yaml",
+            "climadc/reference/fixtures/gb_london_24h/study-carbon-dominant.yaml",
+            "climadc/reference/fixtures/gb_london_24h/study-demand-charge.yaml",
+            "climadc/reference/fixtures/gb_london_24h/source-manifest.yaml",
+            "climadc/reference/fixtures/gb_london_24h/climate-forecast.csv",
+            "climadc/reference/fixtures/gb_london_24h/actual-weather.csv",
+            "climadc/reference/fixtures/gb_london_24h/grid-signals.csv",
+            "climadc/reference/fixtures/gb_london_24h/workload.csv",
+        ):
+            assert required in wheel_members
 
 
 def test_release_workflow_passes_event_data_through_step_environment() -> None:

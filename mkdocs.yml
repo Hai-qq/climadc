@@ -23,7 +23,20 @@ nav:
   - Quickstart: quickstart.md
   - Concepts:
       - Time semantics: concepts/time-semantics.md
+      - Engineering inputs: concepts/engineering-inputs.md
+      - Engineering replay kernel: concepts/replay-kernel.md
+      - Replay robustness suites: concepts/robustness-suites.md
+      - Great Britain reference replay: concepts/reference-replay.md
+      - Read-only integrations: concepts/read-only-integrations.md
+  - Design:
+      - v0.2 engineering replay: design/v0.2-engineering-replay.md
   - 简体中文:
       - 首页: zh-CN/index.md
       - 快速开始: zh-CN/quickstart.md
       - 时间语义: zh-CN/concepts/time-semantics.md
+      - 工程输入契约: zh-CN/concepts/engineering-inputs.md
+      - 工程回放内核: zh-CN/concepts/replay-kernel.md
+      - 回放稳健性套件: zh-CN/concepts/robustness-suites.md
+      - 英国参考回放: zh-CN/concepts/reference-replay.md
+      - 只读生态适配器: zh-CN/concepts/read-only-integrations.md
+      - v0.2 工程回放设计: zh-CN/design/v0.2-engineering-replay.md

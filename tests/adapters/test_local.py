@@ -6,7 +6,13 @@ import re
 import pandas as pd
 import pytest
 
-from climadc.adapters.local import read_climate, read_telemetry, read_workload
+from climadc.adapters.local import (
+    read_climate,
+    read_flexible_workload,
+    read_grid_signals,
+    read_telemetry,
+    read_workload,
+)
 from climadc.errors import ConfigurationError, ContractError
 
 
@@ -236,3 +242,88 @@ def test_read_workload_reuses_local_normalization(tmp_path: Path) -> None:
 
     assert result.loc[0, "event_time"] == pd.Timestamp("2026-01-01 00:00Z")
     assert result.loc[0, "deadline"] == pd.Timestamp("2026-01-01 02:00Z")
+
+
+def test_read_grid_signals_normalizes_nullable_issue_time(tmp_path: Path) -> None:
+    source = pd.DataFrame(
+        {
+            "site": ["dc-1"],
+            "region": ["GB-13"],
+            "issued": [pd.NA],
+            "available": ["2026-01-01 08:05"],
+            "valid": ["2026-01-01 08:00"],
+            "name": ["carbon_intensity"],
+            "reading": [180.0],
+            "units": ["gCO2e / kWh"],
+            "provider": ["fixture"],
+            "status": ["estimated"],
+            "quantile": [pd.NA],
+        }
+    )
+    path = tmp_path / "grid.csv"
+    source.to_csv(path, index=False)
+
+    result = read_grid_signals(
+        path,
+        "csv",
+        {
+            "site": "site_id",
+            "region": "region_id",
+            "issued": "issue_time",
+            "available": "available_at",
+            "valid": "valid_time",
+            "name": "signal",
+            "reading": "value",
+            "units": "unit",
+            "provider": "source",
+            "status": "quality",
+        },
+        "Asia/Shanghai",
+    ).to_pandas()
+
+    assert result["issue_time"].isna().all()
+    assert result.loc[0, "valid_time"] == pd.Timestamp("2026-01-01 00:00Z")
+    assert result.loc[0, "available_at"] == pd.Timestamp("2026-01-01 00:05Z")
+
+
+def test_read_flexible_workload_normalizes_engineering_fields(tmp_path: Path) -> None:
+    source = pd.DataFrame(
+        {
+            "job": ["batch-1"],
+            "site": ["dc-1"],
+            "released": ["2026-01-01 08:00"],
+            "available": ["2026-01-01 08:05"],
+            "deadline_at": ["2026-01-01 12:00"],
+            "energy_required": [8.0],
+            "energy_units": ["kWh"],
+            "power_limit": [4.0],
+            "power_units": ["kW"],
+            "can_preempt": [True],
+            "job_priority": [1.0],
+        }
+    )
+    path = tmp_path / "flexible-workload.parquet"
+    source.to_parquet(path, index=False)
+
+    result = read_flexible_workload(
+        path,
+        "parquet",
+        {
+            "job": "job_id",
+            "site": "site_id",
+            "released": "release_time",
+            "available": "available_at",
+            "deadline_at": "deadline",
+            "energy_required": "energy",
+            "energy_units": "energy_unit",
+            "power_limit": "max_power",
+            "power_units": "power_unit",
+            "can_preempt": "preemptible",
+            "job_priority": "priority",
+        },
+        "Asia/Shanghai",
+    ).to_pandas()
+
+    assert result.loc[0, "release_time"] == pd.Timestamp("2026-01-01 00:00Z")
+    assert result.loc[0, "energy"] == 8.0
+    assert result.loc[0, "max_power"] == 4.0

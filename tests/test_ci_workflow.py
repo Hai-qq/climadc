@@ -90,3 +90,16 @@ def test_quality_job_installs_optional_xarray_with_ci_numpy_constraint() -> None
     ]
     assert 'python -m pip install -e ".[lightgbm,xarray,dev]"' in optional_commands
     assert any("tests/adapters/test_xarray.py" in command for command in optional_commands)
+
+
+def test_scheduled_reference_provider_workflow_runs_only_network_contract_test() -> None:
+    path = ROOT / ".github" / "workflows" / "network-checks.yml"
+    text = path.read_text(encoding="utf-8")
+    workflow = yaml.safe_load(text)
+    steps = workflow["jobs"]["reference-providers"]["steps"]
+    commands = [step["run"] for step in steps if "run" in step]
+
+    assert "schedule:" in text
+    assert "workflow_dispatch:" in text
+    assert "python -m pytest -m network tests/integration/test_reference_network.py -q" in commands
+    assert workflow["permissions"] == {"contents": "read"}

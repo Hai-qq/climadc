@@ -1,12 +1,15 @@
 from dataclasses import FrozenInstanceError
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import pytest
 
 from climadc.contracts.frames import (
     ClimateForecastFrame,
     DCTelemetryFrame,
+    FlexibleWorkloadFrame,
+    GridSignalFrame,
     PredictionFrame,
     WorkloadFrame,
 )
@@ -72,6 +75,60 @@ def _prediction_frame() -> pd.DataFrame:
             "value": [100.0],
             "unit": ["kW"],
             "quantile": [pd.NA],
+        }
+    )
+
+
+def _grid_forecast_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "site_id": ["dc-1"],
+            "region_id": ["GB-13"],
+            "issue_time": [pd.Timestamp("2026-01-01 00:00", tz="Asia/Shanghai")],
+            "available_at": [pd.Timestamp("2026-01-01 00:05", tz="Asia/Shanghai")],
+            "valid_time": [pd.Timestamp("2026-01-01 04:00", tz="Asia/Shanghai")],
+            "signal": ["carbon_intensity"],
+            "value": [180.0],
+            "unit": ["gCO2e / kWh"],
+            "source": ["fixture"],
+            "quality": ["forecast"],
+            "quantile": [pd.NA],
+        }
+    )
+
+
+def _grid_realized_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "site_id": ["dc-1"],
+            "region_id": ["GB-13"],
+            "issue_time": pd.Series([pd.NaT], dtype="datetime64[ns, Asia/Shanghai]"),
+            "available_at": [pd.Timestamp("2026-01-01 04:05", tz="Asia/Shanghai")],
+            "valid_time": [pd.Timestamp("2026-01-01 04:00", tz="Asia/Shanghai")],
+            "signal": ["carbon_intensity"],
+            "value": [190.0],
+            "unit": ["gCO2e / kWh"],
+            "source": ["fixture"],
+            "quality": ["estimated"],
+            "quantile": [pd.NA],
+        }
+    )
+
+
+def _flexible_workload_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "job_id": ["batch-1"],
+            "site_id": ["dc-1"],
+            "release_time": [pd.Timestamp("2026-01-01 00:00", tz="Asia/Shanghai")],
+            "available_at": [pd.Timestamp("2026-01-01 00:05", tz="Asia/Shanghai")],
+            "deadline": [pd.Timestamp("2026-01-01 04:00", tz="Asia/Shanghai")],
+            "energy": [8.0],
+            "energy_unit": ["kWh"],
+            "max_power": [4.0],
+            "power_unit": ["kW"],
+            "preemptible": [True],
+            "priority": [1.0],
         }
     )
 
@@ -347,3 +404,198 @@ def test_prediction_requires_issue_time_not_after_valid_time() -> None:
 
     with pytest.raises(ContractError, match="issue_time <= valid_time"):
         PredictionFrame.from_pandas(frame)
+
+
+def test_grid_signal_accepts_forecast_and_realized_rows_with_distinct_time_semantics() -> None:
+    frame = pd.concat([_grid_realized_frame(), _grid_forecast_frame()], ignore_index=True)
+
+    result = GridSignalFrame.from_pandas(frame).to_pandas()
+
+    assert str(result["issue_time"].dtype).endswith("UTC]")
+    assert str(result["available_at"].dtype).endswith("UTC]")
+    assert str(result["valid_time"].dtype).endswith("UTC]")
+    assert set(result["quality"]) == {"forecast", "estimated"}
+    assert result.loc[result["quality"] == "estimated", "issue_time"].isna().all()
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (
+            lambda frame: frame.__setitem__("issue_time", pd.Series([pd.NaT], dtype=object)),
+            "forecast rows require issue_time",
+        ),
+        (
+            lambda frame: frame.__setitem__(
+                "available_at", [pd.Timestamp("2025-12-31 23:59", tz="Asia/Shanghai")]
+            ),
+            "issue_time <= available_at <= valid_time",
+        ),
+        (lambda frame: frame.__setitem__("quality", ["raw"]), "quality"),
+        (lambda frame: frame.__setitem__("signal", ["cost_proxy"]), "signal"),
+        (lambda frame: frame.__setitem__("value", [-1.0]), "carbon_intensity.*nonnegative"),
+    ],
+)
+def test_grid_forecast_rejects_invalid_semantics(mutate: Any, message: str) -> None:
+    frame = _grid_forecast_frame()
+    mutate(frame)
+
+    with pytest.raises(ContractError, match=message):
+        GridSignalFrame.from_pandas(frame)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (
+            lambda frame: frame.__setitem__(
+                "issue_time", [pd.Timestamp("2026-01-01 03:00", tz="Asia/Shanghai")]
+            ),
+            "realized rows must not set issue_time",
+        ),
+        (
+            lambda frame: frame.__setitem__(
+                "available_at", [pd.Timestamp("2026-01-01 03:59", tz="Asia/Shanghai")]
+            ),
+            "valid_time <= available_at",
+        ),
+        (lambda frame: frame.__setitem__("quantile", [0.5]), "realized rows.*quantile"),
+    ],
+)
+def test_grid_realized_signal_rejects_invalid_semantics(mutate: Any, message: str) -> None:
+    frame = _grid_realized_frame()
+    mutate(frame)
+
+    with pytest.raises(ContractError, match=message):
+        GridSignalFrame.from_pandas(frame)
+
+
+@pytest.mark.parametrize(
+    ("signal", "unit"),
+    [
+        ("carbon_intensity", "kW"),
+        ("energy_price", "gCO2e / kWh"),
+        ("energy_price", "JPY / kWh"),
+    ],
+)
+def test_grid_signal_rejects_units_that_do_not_match_signal(signal: str, unit: str) -> None:
+    frame = _grid_forecast_frame()
+    frame.loc[0, "signal"] = signal
+    frame.loc[0, "unit"] = unit
+
+    with pytest.raises(ContractError, match="unit must be compatible"):
+        GridSignalFrame.from_pandas(frame)
+
+
+@pytest.mark.parametrize(
+    ("signal", "unit"),
+    [
+        ("carbon_intensity", "kgCO2e / MWh"),
+        ("energy_price", "GBP / MWh"),
+        ("energy_price", "CNY / kWh"),
+    ],
+)
+def test_grid_signal_accepts_supported_convertible_units(signal: str, unit: str) -> None:
+    frame = _grid_forecast_frame()
+    frame.loc[0, "signal"] = signal
+    frame.loc[0, "unit"] = unit
+
+    result = GridSignalFrame.from_pandas(frame).to_pandas()
+
+    assert result.loc[0, "unit"] == unit
+
+
+def test_grid_signal_rejects_duplicate_realized_keys() -> None:
+    frame = pd.concat([_grid_realized_frame(), _grid_realized_frame()], ignore_index=True)
+
+    with pytest.raises(ContractError, match="duplicate key"):
+        GridSignalFrame.from_pandas(frame)
+
+
+def test_flexible_workload_normalizes_times_and_accepts_convertible_units() -> None:
+    frame = _flexible_workload_frame()
+    frame.loc[0, "energy"] = 0.008
+    frame.loc[0, "energy_unit"] = "MWh"
+    frame.loc[0, "max_power"] = 0.004
+    frame.loc[0, "power_unit"] = "MW"
+
+    result = FlexibleWorkloadFrame.from_pandas(frame).to_pandas()
+
+    assert result.loc[0, "release_time"] == pd.Timestamp("2025-12-31 16:00", tz="UTC")
+    assert result.loc[0, "energy_unit"] == "MWh"
+
+
+def test_flexible_workload_accepts_numpy_boolean_from_object_input() -> None:
+    frame = _flexible_workload_frame()
+    frame["preemptible"] = pd.Series([np.bool_(True)], dtype=object)
+
+    result = FlexibleWorkloadFrame.from_pandas(frame).to_pandas()
+
+    assert bool(result.loc[0, "preemptible"])
+
+
+@pytest.mark.parametrize(
+    ("column", "value", "message"),
+    [
+        ("energy", 0.0, "energy must be positive"),
+        ("energy", float("inf"), "energy must be finite"),
+        ("max_power", 0.0, "max_power must be positive"),
+        ("max_power", "fast", "max_power must be numeric"),
+        ("priority", -1.0, "priority must be nonnegative"),
+        ("preemptible", False, "only preemptible jobs"),
+        ("job_id", "", "job_id must be a non-empty string"),
+    ],
+)
+def test_flexible_workload_rejects_invalid_job_fields(
+    column: str, value: object, message: str
+) -> None:
+    frame = _flexible_workload_frame()
+    frame[column] = frame[column].astype(object)
+    frame.loc[0, column] = value
+
+    with pytest.raises(ContractError, match=message):
+        FlexibleWorkloadFrame.from_pandas(frame)
+
+
+@pytest.mark.parametrize(
+    ("column", "unit"),
+    [("energy_unit", "kW"), ("power_unit", "kWh")],
+)
+def test_flexible_workload_rejects_wrong_physical_dimensions(column: str, unit: str) -> None:
+    frame = _flexible_workload_frame()
+    frame.loc[0, column] = unit
+
+    with pytest.raises(ContractError, match="unit must be compatible"):
+        FlexibleWorkloadFrame.from_pandas(frame)
+
+
+def test_flexible_workload_rejects_impossible_energy_before_deadline() -> None:
+    frame = _flexible_workload_frame()
+    frame.loc[0, "energy"] = 100.0
+
+    with pytest.raises(ContractError, match="minimum runtime exceeds available window"):
+        FlexibleWorkloadFrame.from_pandas(frame)
+
+
+@pytest.mark.parametrize(
+    ("column", "timestamp", "message"),
+    [
+        ("available_at", "2025-12-31 23:59", "release_time <= available_at <= deadline"),
+        ("deadline", "2026-01-01 00:04", "release_time <= available_at <= deadline"),
+    ],
+)
+def test_flexible_workload_rejects_invalid_time_order(
+    column: str, timestamp: str, message: str
+) -> None:
+    frame = _flexible_workload_frame()
+    frame.loc[0, column] = pd.Timestamp(timestamp, tz="Asia/Shanghai")
+
+    with pytest.raises(ContractError, match=message):
+        FlexibleWorkloadFrame.from_pandas(frame)
+
+
+def test_flexible_workload_rejects_duplicate_job_key() -> None:
+    frame = pd.concat([_flexible_workload_frame(), _flexible_workload_frame()], ignore_index=True)
+
+    with pytest.raises(ContractError, match="duplicate key"):
+        FlexibleWorkloadFrame.from_pandas(frame)
