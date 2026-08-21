@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import tempfile
 from pathlib import Path
@@ -11,8 +12,10 @@ import yaml
 from climadc.adapters.neso import NESOCarbonIntensityAdapter
 from climadc.adapters.openmeteo_history import OpenMeteoHistoryAdapter
 from climadc.contracts import FlexibleWorkloadFrame, GridSignalFrame
+from climadc.evidence.sources import RawHTTPResponse
 from climadc.errors import ConfigurationError
 from climadc.replay.manifest import SourceManifest, SourceRecord, SourceTiming, sha256_file
+from climadc.reference.tariffs import declared_tariff_value
 
 _FIXTURE_DIR = Path(__file__).parent / "fixtures" / "gb_london_24h"
 _SITE_ID = "gb-london-reference"
@@ -37,21 +40,11 @@ def packaged_suite_path() -> Path:
     return path.resolve()
 
 
-def _tariff_value(hour: int) -> float:
-    if hour < 6:
-        return 0.12
-    if hour < 16:
-        return 0.25
-    if hour < 20:
-        return 0.45
-    return 0.18
-
-
 def _tariff(decision_time: pd.Timestamp, horizon: pd.Timedelta) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     slots = pd.date_range(decision_time, periods=int(horizon / pd.Timedelta(hours=1)), freq="1h")
     for slot in slots:
-        value = _tariff_value(slot.hour)
+        value = declared_tariff_value(slot, time_basis="UTC")
         rows.extend(
             [
                 {
@@ -63,7 +56,7 @@ def _tariff(decision_time: pd.Timestamp, horizon: pd.Timedelta) -> pd.DataFrame:
                     "signal": "energy_price",
                     "value": value,
                     "unit": "GBP / kWh",
-                    "source": "declared-gb-time-of-use-scenario",
+                    "source": "declared-utc-tariff-scenario",
                     "quality": "forecast",
                     "quantile": pd.NA,
                 },
@@ -76,7 +69,7 @@ def _tariff(decision_time: pd.Timestamp, horizon: pd.Timedelta) -> pd.DataFrame:
                     "signal": "energy_price",
                     "value": value,
                     "unit": "GBP / kWh",
-                    "source": "declared-gb-time-of-use-scenario",
+                    "source": "declared-utc-tariff-scenario",
                     "quality": "estimated",
                     "quantile": pd.NA,
                 },
@@ -139,9 +132,12 @@ def _study_payload(decision_time: pd.Timestamp) -> dict[str, object]:
             "interval": "1h",
             "it_capacity_kw": 500,
             "fixed_it_power_kw": 300,
-            "cost_weight": 1,
-            "carbon_weight": 1,
-            "demand_charge_per_kw": 0,
+            "objective": {
+                "version": "1",
+                "mode": "monetized",
+                "carbon_price_currency_per_tco2e": 1000,
+                "demand_charge_per_kw": 0,
+            },
             "tolerance_kwh": 1e-7,
         },
         "facility_model": {
@@ -156,7 +152,7 @@ def _study_payload(decision_time: pd.Timestamp) -> dict[str, object]:
             "location": "London, United Kingdom",
             "latitude": _LATITUDE,
             "longitude": _LONGITUDE,
-            "tariff": "Declared time-of-use scenario; not a supplier tariff or observed bill",
+            "tariff": ("Declared UTC time-of-use scenario; not a supplier tariff or observed bill"),
             "weather_forecast": "Open-Meteo previous_day1 fixed 24-hour lead",
             "weather_settlement": "Open-Meteo gridded historical model estimate",
             "carbon_scope": "National Great Britain signal applied to a London site",
@@ -169,6 +165,10 @@ def _study_payload(decision_time: pd.Timestamp) -> dict[str, object]:
                 "decision time; availability is declared as a scenario assumption."
             ),
             "The national GB carbon signal does not resolve London regional variation.",
+            (
+                "The illustrative 1000 GBP/tCO2e carbon price is a declared sensitivity "
+                "parameter, not a market price."
+            ),
             (
                 "The tariff and workload are synthetic scenario inputs, so results are not "
                 "production savings."
@@ -390,14 +390,38 @@ def refresh_carbon_shift(
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=".climadc-refresh-", dir=destination.parent))
     try:
+        raw_directory = temporary / "raw"
+        raw_directory.mkdir()
+        raw_responses: dict[str, RawHTTPResponse] = {}
+
+        def capture_raw(name: str, response: RawHTTPResponse) -> None:
+            if name not in {
+                "openmeteo-forecast.json",
+                "openmeteo-settlement.json",
+                "neso-carbon.json",
+            }:
+                raise ConfigurationError(f"Unexpected raw response name: {name}")
+            if name in raw_responses:
+                raise ConfigurationError(f"Duplicate raw response capture: {name}")
+            (raw_directory / name).write_bytes(response.body)
+            if sha256_file(raw_directory / name) != response.sha256:
+                raise ConfigurationError(f"Raw response write verification failed: {name}")
+            raw_responses[name] = response
+
         weather = weather_source.fetch(
             latitude=_LATITUDE,
             longitude=_LONGITUDE,
             site_id=_SITE_ID,
             decision_time=decision_time,
             horizon=horizon,
+            raw_capture=capture_raw,
         )
-        carbon = carbon_source.fetch(site_id=_SITE_ID, decision_time=decision_time, horizon=horizon)
+        carbon = carbon_source.fetch(
+            site_id=_SITE_ID,
+            decision_time=decision_time,
+            horizon=horizon,
+            raw_capture=capture_raw,
+        )
         grid = GridSignalFrame.from_pandas(
             pd.concat([carbon.to_pandas(), _tariff(decision_time, horizon)], ignore_index=True)
         )
@@ -406,6 +430,92 @@ def refresh_carbon_shift(
         weather.actual.to_pandas().to_csv(temporary / "actual-weather.csv", index=False)
         grid.to_pandas().to_csv(temporary / "grid-signals.csv", index=False)
         workload.to_pandas().to_csv(temporary / "workload.csv", index=False)
+        if set(raw_responses) != {
+            "openmeteo-forecast.json",
+            "openmeteo-settlement.json",
+            "neso-carbon.json",
+        }:
+            raise ConfigurationError(
+                "Reference refresh did not capture every required raw response"
+            )
+        capture_contract = {
+            "openmeteo-forecast.json": {
+                "provider": "Open-Meteo",
+                "parser": "climadc.adapters.openmeteo_history._series",
+                "parser_schema_version": "1",
+                "canonical_output": "climate-forecast.csv",
+                "transformation_parameters": {
+                    "variable": "temperature_2m_previous_day1",
+                    "lead_hours": 24,
+                    "timezone": "UTC",
+                },
+                "license": "CC BY 4.0",
+                "attribution": "Weather data by Open-Meteo.com",
+            },
+            "openmeteo-settlement.json": {
+                "provider": "Open-Meteo",
+                "parser": "climadc.adapters.openmeteo_history._series",
+                "parser_schema_version": "1",
+                "canonical_output": "actual-weather.csv",
+                "transformation_parameters": {
+                    "variable": "temperature_2m",
+                    "quality": "estimated",
+                    "timezone": "UTC",
+                },
+                "license": "CC BY 4.0",
+                "attribution": "Weather data by Open-Meteo.com",
+            },
+            "neso-carbon.json": {
+                "provider": "NESO Carbon Intensity API",
+                "parser": "climadc.adapters.neso.NESOCarbonIntensityAdapter.fetch",
+                "parser_schema_version": "1",
+                "canonical_output": "grid-signals.csv",
+                "transformation_parameters": {
+                    "aggregation": "arithmetic mean of two national half-hour intervals",
+                    "region_id": "GB",
+                    "settlement_quality": "estimated",
+                    "merged_project_input": "declared UTC tariff scenario",
+                },
+                "license": "CC BY 4.0",
+                "attribution": "Carbon intensity data by National Energy System Operator",
+            },
+        }
+        retrieval_records: list[dict[str, object]] = []
+        for name in sorted(raw_responses):
+            response = raw_responses[name]
+            contract = capture_contract[name]
+            canonical_output = str(contract["canonical_output"])
+            retrieval_records.append(
+                {
+                    "provider": contract["provider"],
+                    "request_url": response.url,
+                    "retrieved_at": retrieval.isoformat(),
+                    "http_status": response.status,
+                    "response_headers": dict(response.headers),
+                    "raw_artifact": name,
+                    "raw_sha256": response.sha256,
+                    "raw_bytes": len(response.body),
+                    "capture_kind": response.capture_kind,
+                    "parser": contract["parser"],
+                    "parser_schema_version": contract["parser_schema_version"],
+                    "transformation_parameters": contract["transformation_parameters"],
+                    "canonical_output": canonical_output,
+                    "canonical_output_sha256": sha256_file(temporary / canonical_output),
+                    "license": contract["license"],
+                    "attribution": contract["attribution"],
+                }
+            )
+        (raw_directory / "retrieval-metadata.json").write_text(
+            json.dumps(
+                {"schema_version": "1", "records": retrieval_records},
+                sort_keys=True,
+                indent=2,
+                allow_nan=False,
+            )
+            + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
         manifest = _manifest(
             temporary,
             retrieved_at=retrieval,

@@ -23,6 +23,7 @@ from climadc.replay import (
     SourceManifest,
 )
 from climadc.replay.artifacts import REPLAY_ARTIFACTS
+from climadc.replay.manifest import sha256_file
 
 DECISION = pd.Timestamp("2026-08-01T00:00:00Z")
 RETRIEVED = pd.Timestamp("2026-08-06T12:46:02Z")
@@ -131,8 +132,9 @@ def test_packaged_reference_runs_all_policies_without_leakage_or_constraint_loss
     assert (metrics["deadline_violations"] == 0.0).all()
     assert (metrics["energy_balance_error_kwh"] <= 1e-7).all()
     assert metrics.loc["price", "energy_cost_change_vs_asap"] < 0.0
-    assert metrics.loc["price", "emissions_change_vs_asap_kgco2e"] > 0.0
-    assert metrics.loc["carbon", "emissions_change_vs_asap_kgco2e"] < 0.0
+    emissions_delta = "estimated_location_based_emissions_change_vs_asap_kgco2e"
+    assert metrics.loc["price", emissions_delta] > 0.0
+    assert metrics.loc["carbon", emissions_delta] < 0.0
     assert metrics.loc["carbon", "energy_cost_change_vs_asap"] > 0.0
     assert metrics.loc["peak", "peak_change_vs_asap_kw"] < 0.0
 
@@ -225,6 +227,25 @@ def test_refresh_creates_new_verified_snapshot_and_refuses_overwrite(tmp_path: P
     result = ReplayStudyRunner(clock=lambda: RETRIEVED).run(config)
     assert result.replay.status["feasible"].all()
     assert len(SourceManifest.from_yaml(config.source_manifest).records) == 6
+    raw = destination / "raw"
+    assert {path.name for path in raw.iterdir()} == {
+        "openmeteo-forecast.json",
+        "openmeteo-settlement.json",
+        "neso-carbon.json",
+        "retrieval-metadata.json",
+    }
+    retrieval = json.loads((raw / "retrieval-metadata.json").read_text(encoding="utf-8"))
+    assert retrieval["schema_version"] == "1"
+    assert len(retrieval["records"]) == 3
+    for record in retrieval["records"]:
+        raw_path = raw / record["raw_artifact"]
+        canonical_path = destination / record["canonical_output"]
+        assert record["raw_bytes"] == raw_path.stat().st_size
+        assert record["raw_sha256"] == sha256_file(raw_path)
+        assert record["canonical_output_sha256"] == sha256_file(canonical_path)
+        assert record["capture_kind"] == "injected_mapping"
+        assert record["license"]
+        assert record["attribution"]
     with pytest.raises(ConfigurationError, match="already exists"):
         refresh_carbon_shift(
             destination,

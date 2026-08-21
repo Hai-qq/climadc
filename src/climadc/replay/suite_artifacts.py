@@ -13,11 +13,13 @@ import pandas as pd
 import yaml
 
 from climadc import __version__
+from climadc.evidence.manifest import RunManifest, SolverRecord
+from climadc.evidence.writer import finalize_evidence
 from climadc.errors import ConfigurationError
 from climadc.replay.artifacts import REPLAY_ARTIFACTS, ReplayArtifactWriter
 from climadc.replay.suite import ReplaySuiteResult, suite_assumptions_payload
 from climadc.replay.suite_html import render_replay_suite_report
-from climadc.reporting.artifacts import resolve_run_path, update_latest_pointer
+from climadc.reporting.artifacts import update_latest_pointer
 
 REPLAY_SUITE_ARTIFACTS = frozenset(
     {
@@ -25,10 +27,13 @@ REPLAY_SUITE_ARTIFACTS = frozenset(
         "lineage.json",
         "scenario-index.json",
         "scenario-metrics.parquet",
-        "robustness-metrics.json",
+        "suite-metrics.json",
         "pareto-frontier.json",
         "report.html",
         "scenarios",
+        "run-manifest.json",
+        "environment.json",
+        "checksums.sha256",
     }
 )
 
@@ -111,20 +116,21 @@ def _scenario_index_payload(
     }
 
 
-def _robustness_payload(result: ReplaySuiteResult) -> dict[str, object]:
+def _suite_metrics_payload(result: ReplaySuiteResult) -> dict[str, object]:
     return {
         "schema_version": "1",
         "suite_id": result.config.suite_id,
+        "suite_type": result.config.suite_type,
         "aggregation": "equal_weight",
         "baseline": "ASAP within each scenario",
         "improvement_rule": "signed delta < -1e-9 in the metric's published unit",
         "units": {
             "energy_cost_change_vs_asap": result.currency,
-            "emissions_change_vs_asap_kgco2e": "kgCO2e",
+            "estimated_location_based_emissions_change_vs_asap_kgco2e": "kgCO2e",
             "peak_change_vs_asap_kw": "kW",
             "fractions": "ratio from 0 to 1",
         },
-        "records": _frame_records(result.robustness_metrics),
+        "records": _frame_records(result.suite_metrics),
     }
 
 
@@ -142,7 +148,7 @@ def _pareto_payload(result: ReplaySuiteResult) -> dict[str, object]:
                 "unit": result.currency,
             },
             {
-                "metric": "mean_emissions_change_vs_asap_kgco2e",
+                "metric": ("mean_estimated_location_based_emissions_change_vs_asap_kgco2e"),
                 "unit": "kgCO2e",
             },
             {"metric": "mean_peak_change_vs_asap_kw", "unit": "kW"},
@@ -169,6 +175,9 @@ class ReplaySuiteArtifactWriter:
                 scenario.study,
                 scenario_root / scenario.scenario_id,
             )
+            latest = run_path.parent / "latest"
+            if latest.exists() or latest.is_symlink():
+                latest.unlink()
             scenario_paths[scenario.scenario_id] = run_path.relative_to(directory).as_posix()
 
         (directory / "suite.yaml").write_text(
@@ -194,8 +203,8 @@ class ReplaySuiteArtifactWriter:
             directory / "scenario-metrics.parquet",
             index=False,
         )
-        (directory / "robustness-metrics.json").write_text(
-            _json_text(_robustness_payload(result)),
+        (directory / "suite-metrics.json").write_text(
+            _json_text(_suite_metrics_payload(result)),
             encoding="utf-8",
             newline="\n",
         )
@@ -240,7 +249,7 @@ class ReplaySuiteArtifactWriter:
                     "scenario-index.json",
                     _scenario_index_payload(result, scenario_paths),
                 ),
-                ("robustness-metrics.json", _robustness_payload(result)),
+                ("suite-metrics.json", _suite_metrics_payload(result)),
                 ("pareto-frontier.json", _pareto_payload(result)),
             )
             for name, expected in expected_json:
@@ -270,9 +279,9 @@ class ReplaySuiteArtifactWriter:
                     raise ValueError(
                         f"scenario run has an invalid artifact set: {scenario.scenario_id}"
                     )
-                if resolve_run_path(parent / "latest") != run_path:
+                if any(path.name == "latest" for path in parent.iterdir()):
                     raise ValueError(
-                        f"scenario latest pointer differs from run: {scenario.scenario_id}"
+                        f"scenario contains a non-portable latest pointer: {scenario.scenario_id}"
                     )
             report = (directory / "report.html").read_text(encoding="utf-8")
             if report != render_replay_suite_report(result, run_id, scenario_paths):
@@ -302,7 +311,44 @@ class ReplaySuiteArtifactWriter:
                 Path(tempfile.mkdtemp(prefix=".climadc-replay-suite-", dir=runs_dir))
             )
             scenario_paths = self._write(temporary, result, run_id)
+            combined_hashes: dict[str, str] = {}
+            for scenario_id, relative in scenario_paths.items():
+                subrun_manifest = RunManifest.model_validate(
+                    json.loads(
+                        (temporary / relative / "run-manifest.json").read_text(encoding="utf-8")
+                    )
+                )
+                combined_hashes.update(
+                    {
+                        f"{scenario_id}/{name}": digest
+                        for name, digest in subrun_manifest.input_hashes.items()
+                    }
+                )
+            finalize_evidence(
+                temporary,
+                run_type="replay_suite",
+                run_id=run_id,
+                study_id=result.config.suite_id,
+                started_at=result.started_at,
+                config_sha256=result.config_sha256,
+                input_hashes=combined_hashes,
+                solver=SolverRecord(
+                    name="SciPy HiGHS",
+                    method="scenario replay aggregation; no aggregate solve",
+                    options={"scenario_aggregation": "equal_weight"},
+                ),
+            )
             self._validate(temporary, result, run_id, scenario_paths)
+            from climadc.evidence.verify import verify_suite
+
+            verification = verify_suite(temporary)
+            if not verification.valid:
+                failures = [
+                    check.message for check in verification.checks if check.status == "fail"
+                ]
+                raise ConfigurationError(
+                    f"Independent replay suite verification failed: {'; '.join(failures)}"
+                )
             temporary.rename(final)
             published = True
             update_latest_pointer(runs_dir, final)

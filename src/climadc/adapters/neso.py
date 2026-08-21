@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 import math
-import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from numbers import Real
 from types import MappingProxyType
@@ -11,26 +9,29 @@ from typing import cast
 import pandas as pd
 
 from climadc.contracts import GridSignalFrame
+from climadc.evidence.sources import (
+    RawHTTPResponse,
+    coerce_json_response,
+    fetch_json_response,
+)
 from climadc.errors import ConfigurationError
 
 _ENDPOINT = "https://api.carbonintensity.org.uk/intensity"
 _TIMEOUT_SECONDS = 30.0
-_USER_AGENT = "climadc/0.2-reference"
+_USER_AGENT = "climadc/0.3-reference"
 
-Transport = Callable[[str], Mapping[str, object]]
+Transport = Callable[[str], Mapping[str, object] | RawHTTPResponse]
 Clock = Callable[[], pd.Timestamp]
+RawCapture = Callable[[str, RawHTTPResponse], None]
 
 
-def _transport(url: str) -> Mapping[str, object]:
-    request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-    try:
-        with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise ConfigurationError(f"NESO Carbon Intensity request failed: {exc}") from exc
-    if not isinstance(payload, Mapping):
-        raise ConfigurationError("NESO Carbon Intensity response must be a JSON object")
-    return payload
+def _transport(url: str) -> RawHTTPResponse:
+    return fetch_json_response(
+        url,
+        provider="NESO Carbon Intensity",
+        user_agent=_USER_AGENT,
+        timeout_seconds=_TIMEOUT_SECONDS,
+    )
 
 
 def _exact_utc(value: object, field: str) -> pd.Timestamp:
@@ -79,10 +80,15 @@ class NESOCarbonIntensityAdapter:
         self._transport = transport if transport is not None else _transport
         self._clock = clock if clock is not None else (lambda: pd.Timestamp.now(tz="UTC"))
         self._metadata: Mapping[str, str] = MappingProxyType({})
+        self._raw_response: RawHTTPResponse | None = None
 
     @property
     def metadata(self) -> Mapping[str, str]:
         return self._metadata
+
+    @property
+    def raw_response(self) -> RawHTTPResponse | None:
+        return self._raw_response
 
     def fetch(
         self,
@@ -90,6 +96,7 @@ class NESOCarbonIntensityAdapter:
         site_id: str,
         decision_time: pd.Timestamp,
         horizon: pd.Timedelta,
+        raw_capture: RawCapture | None = None,
     ) -> GridSignalFrame:
         if not isinstance(site_id, str) or not site_id.strip():
             raise ConfigurationError("site_id must be a non-empty string")
@@ -99,9 +106,11 @@ class NESOCarbonIntensityAdapter:
         duration = _whole_hour_horizon(horizon)
         end = decision + duration
         url = f"{_ENDPOINT}/{_iso_path(decision)}/{_iso_path(end)}"
-        payload = self._transport(url)
-        if not isinstance(payload, Mapping):
-            raise ConfigurationError("NESO transport must return a mapping")
+        payload, raw_response = coerce_json_response(
+            self._transport(url), url=url, provider="NESO Carbon Intensity"
+        )
+        if raw_capture is not None:
+            raw_capture("neso-carbon.json", raw_response)
         retrieved = _exact_utc(self._clock(), "retrieval timestamp")
         if retrieved < end:
             raise ConfigurationError("historical retrieval must not precede the replay horizon end")
@@ -193,4 +202,5 @@ class NESOCarbonIntensityAdapter:
                 "actual_quality": "provider estimated actual",
             }
         )
+        self._raw_response = raw_response
         return GridSignalFrame.from_pandas(cast(pd.DataFrame, pd.DataFrame(rows)))
