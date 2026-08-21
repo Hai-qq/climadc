@@ -8,14 +8,14 @@ claims:
     scenario_or_study_id: weatherdc-kasetsart-small-reference
     metric: cooling_power.weatherdc point metrics
     baseline: legal last-observation persistence on the same eight test timestamps
-    code_commit: 52bd90e0ab27b0e77238fd16286be1b408df36fb
+    code_commit: 5ca987a3a585779b1eef75efc53d412fce7e3538
     code_dirty: false
     config_sha256: d11238394b28ead2fcca0fcad3fae61f98a21993f55a0dffcdf49e8f6b40a41c
     input_hashes:
       climate: bf134a50214574105fe34ad9107961b005a011eb2f1824c9ac3a42433fb680e0
       telemetry: 03ba2213f1ad89c2e3410fdac43c33426fe59b0979ae316e3b35f3aba42a6e24
       workload: f9edc0d3158c1c67b3464051a4796d187807c47cad1368a560f7c653b52da629
-      weatherdc_reference_implementation: 81f60844cd8d2a7a3152f50a46d450630e2a3d5e3fde2d764df6d93c38b7f99b
+      weatherdc_reference_implementation: ff0f3fdb6e812c0898d52a5691cee28289d06e46271d0d2c1ab6eb0129a7da17
     output_artifact: generated WeatherDC v2 run metrics.json
     output_sha256: 7021266590a0cf0f20daad1209a80e50be945a352e764a5b58e9e42fa2833f2c
     reproduction_command: python examples/weatherdc_kasetsart/run.py --small --output-dir <temp-dir>
@@ -32,7 +32,7 @@ claims:
     scenario_or_study_id: gb-london-carbon-shift-24h
     metric: price.energy_cost_change_vs_asap and price.estimated_location_based_emissions_change_vs_asap_kgco2e
     baseline: ASAP under the same fixture, capacity, deadlines, and settlement signals
-    code_commit: 52bd90e0ab27b0e77238fd16286be1b408df36fb
+    code_commit: 5ca987a3a585779b1eef75efc53d412fce7e3538
     code_dirty: false
     config_sha256: f32e92733c68c469513393204a3cd703b37ff5500f44c4f7d1f9c35baced879e
     input_hashes:
@@ -41,7 +41,7 @@ claims:
       grid-signals.csv: 0ddda011b3268f8eeb0e9ea3de785c4b181845f1a00ee2d90b5c53d40f59b4b8
       workload.csv: 53add7e8b53447a6969125d0e48d5042e8a43d424b80f5fdd1da7543846ae768
     output_artifact: benchmarks/reference/gb_london_24h/summary.json
-    output_sha256: 51113f1dd81f8781ca5670b327e9e2c528534c4c86e17ad0837484c72ca9db0a
+    output_sha256: c0c63779bd7cfce4139a63e537391b6a1b2a3d401d113c932124414581b6bf25
     reproduction_command: python benchmarks/reference/gb_london_24h/reproduce.py --check
     limitations:
       - The workload, tariff, facility model, and illustrative carbon price are declared assumptions.
