@@ -54,10 +54,10 @@ network refresh is required to create the raw chain.
 
 [`evidence/claims.yaml`](https://github.com/Hai-qq/climadc/blob/main/evidence/claims.yaml) is the
 machine-readable claim registry. Each entry binds the exact wording to its configuration, inputs,
-source-code state, named output artifact, and that output's SHA-256 digest. A dirty
-working tree is recorded explicitly. Until a maintainer commits the release changes and regenerates
-the summaries, its `code_commit` identifies the pinned HEAD and `code_dirty: true` prevents that
-revision from being mistaken for a clean release build.
+source-code state, named output artifact, and that output's SHA-256 digest. `code_commit` identifies
+the clean source revision used for reproduction, while `code_dirty` records whether that run began
+from a modified tree. The registry update necessarily follows its referenced source revision: a Git
+commit cannot contain its own final hash.
 
 Claims must be removed or marked `deprecated` when their wording no longer matches their evidence.
 Changing a metric, fixture, objective, source, or hash requires regenerating the output and updating

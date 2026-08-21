@@ -8,8 +8,8 @@ claims:
     scenario_or_study_id: weatherdc-kasetsart-small-reference
     metric: cooling_power.weatherdc point metrics
     baseline: legal last-observation persistence on the same eight test timestamps
-    code_commit: dcce5f3eecb958586800d4d65d4034bc3568e1f9
-    code_dirty: true
+    code_commit: 52bd90e0ab27b0e77238fd16286be1b408df36fb
+    code_dirty: false
     config_sha256: 771587091aad0411fc4e48ebf72cf52efa6f9f9ea9d1fe41f08a208cdb349177
     input_hashes:
       climate: bf134a50214574105fe34ad9107961b005a011eb2f1824c9ac3a42433fb680e0
@@ -32,8 +32,8 @@ claims:
     scenario_or_study_id: gb-london-carbon-shift-24h
     metric: price.energy_cost_change_vs_asap and price.estimated_location_based_emissions_change_vs_asap_kgco2e
     baseline: ASAP under the same fixture, capacity, deadlines, and settlement signals
-    code_commit: dcce5f3eecb958586800d4d65d4034bc3568e1f9
-    code_dirty: true
+    code_commit: 52bd90e0ab27b0e77238fd16286be1b408df36fb
+    code_dirty: false
     config_sha256: f32e92733c68c469513393204a3cd703b37ff5500f44c4f7d1f9c35baced879e
     input_hashes:
       actual-weather.csv: 4c853d7cff2376bd1e86d7f840aa90e71457e7cfa25ca04a6c2b30eb8d946441
