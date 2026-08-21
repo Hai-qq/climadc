@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Optional, cast
 
 import pandas as pd
 import typer
@@ -9,6 +9,8 @@ from climadc.benchmark import BenchmarkRunner
 from climadc.cli.scaffold import scaffold_study
 from climadc.config import StudyConfig
 from climadc.errors import ClimaDCError, ConfigurationError
+from climadc.evidence.verify import verify_run as verify_run_directory
+from climadc.evidence.verify import verify_suite as verify_suite_directory
 from climadc.reference import packaged_study_path, packaged_suite_path, refresh_carbon_shift
 from climadc.replay import (
     ReplayArtifactWriter,
@@ -82,7 +84,7 @@ def benchmark(config_path: Path) -> None:
 @app.command()
 def replay(
     config_path: Path,
-    output_dir: Annotated[Path | None, typer.Option("--output-dir")] = None,
+    output_dir: Annotated[Optional[Path], typer.Option("--output-dir")] = None,
 ) -> None:
     """Run a verified local engineering replay and publish auditable artifacts."""
 
@@ -100,9 +102,9 @@ def replay(
 @app.command("replay-suite")
 def replay_suite(
     config_path: Path,
-    output_dir: Annotated[Path | None, typer.Option("--output-dir")] = None,
+    output_dir: Annotated[Optional[Path], typer.Option("--output-dir")] = None,
 ) -> None:
-    """Run comparable replay studies and publish a robustness/Pareto report."""
+    """Run comparable replay studies and publish a sensitivity/robustness report."""
 
     try:
         config = ReplaySuiteConfig.from_yaml(config_path)
@@ -130,12 +132,7 @@ def demo_carbon_shift(
     typer.echo(str(run_path))
 
 
-@demo_app.command("robustness-suite")
-def demo_robustness_suite(
-    output_dir: Annotated[Path, typer.Option("--output-dir")] = Path("climadc-replay-suite-runs"),
-) -> None:
-    """Run the packaged four-scenario policy-sensitivity suite offline."""
-
+def _demo_sensitivity_suite(output_dir: Path) -> None:
     try:
         config = ReplaySuiteConfig.from_yaml(packaged_suite_path()).with_output_dir(output_dir)
         result = ReplaySuiteRunner().run(config)
@@ -143,6 +140,29 @@ def demo_robustness_suite(
     except ClimaDCError as exc:
         _user_error(exc)
     typer.echo(str(run_path))
+
+
+@demo_app.command("sensitivity-suite")
+def demo_sensitivity_suite(
+    output_dir: Annotated[Path, typer.Option("--output-dir")] = Path("climadc-replay-suite-runs"),
+) -> None:
+    """Run the packaged four-scenario sensitivity analysis offline."""
+
+    _demo_sensitivity_suite(output_dir)
+
+
+@demo_app.command("robustness-suite")
+def demo_robustness_suite(
+    output_dir: Annotated[Path, typer.Option("--output-dir")] = Path("climadc-replay-suite-runs"),
+) -> None:
+    """Deprecated alias for demo sensitivity-suite."""
+
+    typer.echo(
+        "DEPRECATION: 'demo robustness-suite' is a compatibility alias; "
+        "use 'demo sensitivity-suite'.",
+        err=True,
+    )
+    _demo_sensitivity_suite(output_dir)
 
 
 @demo_app.command("refresh-carbon-shift")
@@ -181,6 +201,47 @@ def report(run_or_pointer: Path) -> None:
     except ClimaDCError as exc:
         _user_error(exc)
     typer.echo(str(report_path))
+
+
+def _emit_verification(report_value: object, *, json_output: bool) -> bool:
+    from climadc.evidence.verify import VerificationReport
+
+    report = cast(VerificationReport, report_value)
+    if json_output:
+        typer.echo(report.to_json(), nl=False)
+    else:
+        state = "VALID" if report.valid else "INVALID"
+        typer.echo(f"{state}: {report.run_type} artifact schema {report.artifact_schema_version}")
+        for check in report.checks:
+            if check.status in {"fail", "warning", "skipped"}:
+                typer.echo(f"{check.status.upper()} {check.check_id}: {check.message}")
+        for limitation in report.limitations:
+            typer.echo(f"LIMITATION: {limitation}")
+    return report.valid
+
+
+@app.command("verify-run")
+def verify_run_command(
+    run_directory: Path,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Verify one published run independently from its directory files."""
+
+    verification = verify_run_directory(run_directory)
+    if not _emit_verification(verification, json_output=json_output):
+        raise typer.Exit(code=1)
+
+
+@app.command("verify-suite")
+def verify_suite_command(
+    suite_directory: Path,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Recursively verify scenario subruns and reconstruct suite aggregates."""
+
+    verification = verify_suite_directory(suite_directory)
+    if not _emit_verification(verification, json_output=json_output):
+        raise typer.Exit(code=1)
 
 
 def main() -> None:

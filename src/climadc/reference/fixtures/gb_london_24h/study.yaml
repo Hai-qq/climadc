@@ -25,9 +25,11 @@ replay:
   interval: 1h
   it_capacity_kw: 500
   fixed_it_power_kw: 300
-  cost_weight: 1
-  carbon_weight: 1
-  demand_charge_per_kw: 0
+  objective:
+    version: "1"
+    mode: monetized
+    carbon_price_currency_per_tco2e: 1000
+    demand_charge_per_kw: 0
   tolerance_kwh: 1.0e-7
 facility_model:
   kind: temperature_sensitive_pue
@@ -40,7 +42,7 @@ assumptions:
   location: London, United Kingdom
   latitude: 51.5074
   longitude: -0.1278
-  tariff: Declared time-of-use scenario; not a supplier tariff or observed bill
+  tariff: Declared UTC time-of-use scenario; not a supplier tariff or observed bill
   weather_forecast: Open-Meteo previous_day1 fixed 24-hour lead
   weather_settlement: Open-Meteo gridded historical model estimate
   carbon_scope: National Great Britain signal applied to a London site
@@ -49,5 +51,6 @@ limitations:
   - Weather settlement is a gridded model estimate, not measured site telemetry.
   - Historical API payloads do not prove forecast availability at the replay decision time; availability is declared as a scenario assumption.
   - The national GB carbon signal does not resolve London regional variation.
+  - The illustrative 1000 GBP/tCO2e carbon price is a declared sensitivity parameter, not a market price.
   - The tariff and workload are synthetic scenario inputs, so results are not production savings.
 output_dir: replay-runs

@@ -112,8 +112,10 @@ def _normalize_nullable_columns(frame: pd.DataFrame, columns: Sequence[str]) -> 
     normalized = frame.copy(deep=True)
     for column in columns:
         if column in normalized.columns:
-            normalized[column] = (
-                normalized[column].astype(object).where(normalized[column].notna(), pd.NA)
+            normalized[column] = pd.Series(
+                [pd.NA if pd.isna(value) else value for value in normalized[column]],
+                index=normalized.index,
+                dtype=object,
             )
     return cast(pd.DataFrame, normalized)
 

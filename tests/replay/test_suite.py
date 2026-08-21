@@ -55,6 +55,28 @@ def test_suite_config_resolves_distinct_safe_scenarios() -> None:
     assert all(scenario.study.is_absolute() for scenario in config.scenarios)
 
 
+def test_robustness_suite_requires_and_actually_varies_a_declared_sample_dimension(
+    tmp_path: Path,
+) -> None:
+    payload = yaml.safe_load(packaged_suite_path().read_text(encoding="utf-8"))
+    fixture = packaged_suite_path().parent
+    for scenario in payload["scenarios"]:
+        scenario["study"] = str(fixture / scenario["study"])
+    payload["suite_type"] = "robustness"
+
+    missing_dimensions = tmp_path / "missing-dimensions.yaml"
+    _write_yaml(missing_dimensions, payload)
+    with pytest.raises(ConfigurationError, match="independent sample dimension"):
+        ReplaySuiteConfig.from_yaml(missing_dimensions)
+
+    payload["robustness_dimensions"] = ["decision_date"]
+    same_day = tmp_path / "same-day.yaml"
+    _write_yaml(same_day, payload)
+    config = ReplaySuiteConfig.from_yaml(same_day)
+    with pytest.raises(ConfigurationError, match="does not vary"):
+        ReplaySuiteRunner(clock=lambda: STARTED).run(config)
+
+
 @pytest.mark.parametrize(
     ("first_id", "second_id", "expected"),
     [
@@ -93,22 +115,23 @@ def test_suite_config_rejects_unsafe_or_duplicate_ids(
         ReplaySuiteConfig.from_yaml(suite_path)
 
 
-def test_suite_runner_reconstructs_equal_weight_robustness_and_pareto(
+def test_suite_runner_reconstructs_equal_weight_sensitivity_and_pareto(
     suite_result: ReplaySuiteResult,
 ) -> None:
     scenario_metrics = suite_result.scenario_metrics
-    robustness = suite_result.robustness_metrics.set_index("policy")
+    sensitivity = suite_result.suite_metrics.set_index("policy")
 
     assert suite_result.mode == "single_window"
     assert suite_result.currency == "GBP"
     assert len(suite_result.scenarios) == 4
     assert len(scenario_metrics) == 4 * 6
     assert scenario_metrics["feasible"].all()
-    assert set(robustness.index) == set(suite_result.policies)
-    assert (robustness["feasible_fraction"] == 1.0).all()
-    assert robustness.loc["asap", "cost_improvement_fraction_of_feasible"] == 0.0
-    assert robustness.loc["asap", "emissions_improvement_fraction_of_feasible"] == 0.0
-    assert robustness.loc["asap", "peak_improvement_fraction_of_feasible"] == 0.0
+    assert suite_result.config.suite_type == "sensitivity"
+    assert set(sensitivity.index) == set(suite_result.policies)
+    assert (sensitivity["feasible_fraction"] == 1.0).all()
+    assert sensitivity.loc["asap", "cost_improvement_fraction_of_feasible"] == 0.0
+    assert sensitivity.loc["asap", "emissions_improvement_fraction_of_feasible"] == 0.0
+    assert sensitivity.loc["asap", "peak_improvement_fraction_of_feasible"] == 0.0
     assert (
         scenario_metrics.loc[
             scenario_metrics["policy"] == "joint", "energy_cost_change_vs_asap"
@@ -118,21 +141,19 @@ def test_suite_runner_reconstructs_equal_weight_robustness_and_pareto(
 
     for policy in suite_result.policies:
         rows = scenario_metrics.loc[scenario_metrics["policy"] == policy]
-        aggregate = robustness.loc[policy]
+        aggregate = sensitivity.loc[policy]
         assert aggregate["mean_energy_cost_change_vs_asap"] == pytest.approx(
             rows["energy_cost_change_vs_asap"].mean()
         )
-        assert aggregate["worst_emissions_change_vs_asap_kgco2e"] == pytest.approx(
-            rows["emissions_change_vs_asap_kgco2e"].max()
-        )
+        assert aggregate[
+            "worst_estimated_location_based_emissions_change_vs_asap_kgco2e"
+        ] == pytest.approx(rows["estimated_location_based_emissions_change_vs_asap_kgco2e"].max())
         assert aggregate["worst_peak_change_vs_asap_kw"] == pytest.approx(
             rows["peak_change_vs_asap_kw"].max()
         )
 
     flagged = tuple(
-        suite_result.robustness_metrics.loc[
-            suite_result.robustness_metrics["pareto_efficient"], "policy"
-        ]
+        suite_result.suite_metrics.loc[suite_result.suite_metrics["pareto_efficient"], "policy"]
     )
     assert suite_result.pareto_frontier == flagged
     assert suite_result.pareto_frontier
@@ -140,6 +161,12 @@ def test_suite_runner_reconstructs_equal_weight_robustness_and_pareto(
 
     scenario_metrics.loc[:, "policy"] = "mutated"
     assert "mutated" not in set(suite_result.scenario_metrics["policy"])
+
+
+def test_legacy_robustness_metrics_accessor_warns(suite_result: ReplaySuiteResult) -> None:
+    with pytest.warns(DeprecationWarning, match="use suite_metrics"):
+        legacy = suite_result.robustness_metrics
+    assert legacy.equals(suite_result.suite_metrics)
 
 
 def test_suite_excludes_infeasible_scenario_from_means_and_pareto(tmp_path: Path) -> None:
@@ -169,7 +196,7 @@ def test_suite_excludes_infeasible_scenario_from_means_and_pareto(tmp_path: Path
     )
 
     result = ReplaySuiteRunner(clock=lambda: STARTED).run(ReplaySuiteConfig.from_yaml(suite_path))
-    robustness = result.robustness_metrics
+    robustness = result.suite_metrics
     stressed = result.scenario_metrics.loc[
         result.scenario_metrics["scenario_id"] == "capacity-stress"
     ]
@@ -220,39 +247,41 @@ def test_suite_artifacts_include_auditable_subruns(
 
     assert {path.name for path in run_path.iterdir()} == REPLAY_SUITE_ARTIFACTS
     index = json.loads((run_path / "scenario-index.json").read_text(encoding="utf-8"))
-    robustness = json.loads((run_path / "robustness-metrics.json").read_text(encoding="utf-8"))
+    sensitivity = json.loads((run_path / "suite-metrics.json").read_text(encoding="utf-8"))
     pareto = json.loads((run_path / "pareto-frontier.json").read_text(encoding="utf-8"))
     report = (run_path / "report.html").read_text(encoding="utf-8")
 
     assert len(index["scenarios"]) == 4
-    assert len(robustness["records"]) == 6
+    assert sensitivity["suite_type"] == "sensitivity"
+    assert len(sensitivity["records"]) == 6
     assert all(
         record["cost_improvement_fraction_of_feasible"] is not None
-        for record in robustness["records"]
+        for record in sensitivity["records"]
     )
     assert pareto["policies"] == list(suite_result.pareto_frontier)
-    assert "EQUAL-WEIGHT ROBUSTNESS STUDY" in report
+    assert "SENSITIVITY ANALYSIS" in report
+    assert "robustness" not in report.lower()
     assert "not production savings or guarantees" in report
     assert "<script" not in report.lower()
     assert "<link" not in report.lower()
     for scenario in index["scenarios"]:
         scenario_run = run_path / scenario["relative_run_path"]
         assert {path.name for path in scenario_run.iterdir()} == REPLAY_ARTIFACTS
-        assert resolve_run_path(scenario_run.parent / "latest") == scenario_run
+        assert not (scenario_run.parent / "latest").exists()
         assert f"{scenario['relative_run_path']}/report.html" in report
     assert resolve_run_path(tmp_path / "suite-runs" / "latest") == run_path
 
 
-def test_cli_runs_packaged_and_generic_robustness_suites(tmp_path: Path) -> None:
+def test_cli_runs_packaged_and_generic_sensitivity_suites(tmp_path: Path) -> None:
     runner = CliRunner()
-    demo_help = runner.invoke(app, ["demo", "robustness-suite", "--help"])
+    demo_help = runner.invoke(app, ["demo", "sensitivity-suite", "--help"])
     assert demo_help.exit_code == 0, demo_help.output
     assert "four-scenario" in demo_help.output
     demo = runner.invoke(
         app,
         [
             "demo",
-            "robustness-suite",
+            "sensitivity-suite",
             "--output-dir",
             str(tmp_path / "demo-runs"),
         ],
@@ -271,10 +300,8 @@ def test_cli_runs_packaged_and_generic_robustness_suites(tmp_path: Path) -> None
     assert generic.exit_code == 0, generic.output
     generic_path = Path(generic.stdout.strip())
 
-    demo_metrics = json.loads((demo_path / "robustness-metrics.json").read_text(encoding="utf-8"))
-    generic_metrics = json.loads(
-        (generic_path / "robustness-metrics.json").read_text(encoding="utf-8")
-    )
+    demo_metrics = json.loads((demo_path / "suite-metrics.json").read_text(encoding="utf-8"))
+    generic_metrics = json.loads((generic_path / "suite-metrics.json").read_text(encoding="utf-8"))
     assert demo_metrics["records"] == generic_metrics["records"]
     report = runner.invoke(app, ["report", str(tmp_path / "generic-runs" / "latest")])
     assert report.exit_code == 0, report.output

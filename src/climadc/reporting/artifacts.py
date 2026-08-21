@@ -18,6 +18,8 @@ import pandas as pd
 import yaml
 
 from climadc import __version__
+from climadc.evidence.manifest import SolverRecord
+from climadc.evidence.writer import finalize_evidence
 from climadc.benchmark import RunResult
 from climadc.contracts.frames import PREDICTION_COLUMNS
 from climadc.errors import ConfigurationError
@@ -33,6 +35,9 @@ REQUIRED_ARTIFACTS = frozenset(
         "leakage-report.json",
         "dataset-card.md",
         "report.html",
+        "run-manifest.json",
+        "environment.json",
+        "checksums.sha256",
     }
 )
 _SPLIT_COLUMNS = ("split_id", "partition", "position", "timestamp")
@@ -452,7 +457,31 @@ class ArtifactWriter:
                 raise ConfigurationError(f"Run directory already exists: {final}")
             temporary = Path(tempfile.mkdtemp(prefix=".climadc-run-", dir=output_dir))
             self._write_payloads(temporary, result, run_id)
+            finalize_evidence(
+                temporary,
+                run_type="benchmark",
+                run_id=run_id,
+                study_id=result.study_id,
+                started_at=result.started_at,
+                config_sha256=result.config_sha256,
+                input_hashes=result.input_hashes,
+                solver=SolverRecord(
+                    name="benchmark-defined",
+                    method="forecast and optional shadow policies",
+                    options={},
+                ),
+            )
             self._validate(temporary, result, run_id)
+            from climadc.evidence.verify import verify_run
+
+            verification = verify_run(temporary)
+            if not verification.valid:
+                failures = [
+                    check.message for check in verification.checks if check.status == "fail"
+                ]
+                raise ConfigurationError(
+                    f"Independent benchmark verification failed: {'; '.join(failures)}"
+                )
             temporary.rename(final)
             published = True
             update_latest_pointer(output_dir, final)

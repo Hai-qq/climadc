@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 import math
-import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -14,6 +12,11 @@ from urllib.parse import urlencode
 import pandas as pd
 
 from climadc.contracts import ClimateForecastFrame, DCTelemetryFrame
+from climadc.evidence.sources import (
+    RawHTTPResponse,
+    coerce_json_response,
+    fetch_json_response,
+)
 from climadc.errors import ConfigurationError
 
 _PREVIOUS_RUNS_ENDPOINT = "https://previous-runs-api.open-meteo.com/v1/forecast"
@@ -21,22 +24,20 @@ _ARCHIVE_ENDPOINT = "https://archive-api.open-meteo.com/v1/archive"
 _FORECAST_VARIABLE = "temperature_2m_previous_day1"
 _ACTUAL_VARIABLE = "temperature_2m"
 _TIMEOUT_SECONDS = 30.0
-_USER_AGENT = "climadc/0.2-reference"
+_USER_AGENT = "climadc/0.3-reference"
 
-Transport = Callable[[str], Mapping[str, object]]
+Transport = Callable[[str], Mapping[str, object] | RawHTTPResponse]
 Clock = Callable[[], pd.Timestamp]
+RawCapture = Callable[[str, RawHTTPResponse], None]
 
 
-def _transport(url: str) -> Mapping[str, object]:
-    request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-    try:
-        with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise ConfigurationError(f"Open-Meteo historical request failed: {exc}") from exc
-    if not isinstance(payload, Mapping):
-        raise ConfigurationError("Open-Meteo historical response must be a JSON object")
-    return payload
+def _transport(url: str) -> RawHTTPResponse:
+    return fetch_json_response(
+        url,
+        provider="Open-Meteo historical",
+        user_agent=_USER_AGENT,
+        timeout_seconds=_TIMEOUT_SECONDS,
+    )
 
 
 def _exact_utc(value: object, field: str) -> pd.Timestamp:
@@ -149,6 +150,7 @@ class OpenMeteoHistoryResult:
     forecast: ClimateForecastFrame
     actual: DCTelemetryFrame
     metadata: Mapping[str, str]
+    raw_responses: Mapping[str, RawHTTPResponse]
 
 
 class OpenMeteoHistoryAdapter:
@@ -166,6 +168,7 @@ class OpenMeteoHistoryAdapter:
         site_id: str,
         decision_time: pd.Timestamp,
         horizon: pd.Timedelta,
+        raw_capture: RawCapture | None = None,
     ) -> OpenMeteoHistoryResult:
         lat = _coordinate(latitude, "latitude", -90.0, 90.0)
         lon = _coordinate(longitude, "longitude", -180.0, 180.0)
@@ -179,10 +182,19 @@ class OpenMeteoHistoryAdapter:
             _PREVIOUS_RUNS_ENDPOINT, lat, lon, decision, duration, _FORECAST_VARIABLE
         )
         actual_url = _url(_ARCHIVE_ENDPOINT, lat, lon, decision, duration, _ACTUAL_VARIABLE)
-        forecast_payload = self._transport(forecast_url)
-        actual_payload = self._transport(actual_url)
-        if not isinstance(forecast_payload, Mapping) or not isinstance(actual_payload, Mapping):
-            raise ConfigurationError("Open-Meteo historical transport must return mappings")
+        forecast_payload, forecast_response = coerce_json_response(
+            self._transport(forecast_url),
+            url=forecast_url,
+            provider="Open-Meteo historical forecast",
+        )
+        actual_payload, actual_response = coerce_json_response(
+            self._transport(actual_url),
+            url=actual_url,
+            provider="Open-Meteo historical settlement",
+        )
+        if raw_capture is not None:
+            raw_capture("openmeteo-forecast.json", forecast_response)
+            raw_capture("openmeteo-settlement.json", actual_response)
         retrieved = _exact_utc(self._clock(), "retrieval timestamp")
         if retrieved < decision + duration:
             raise ConfigurationError("historical retrieval must not precede the replay horizon end")
@@ -233,4 +245,7 @@ class OpenMeteoHistoryAdapter:
             forecast=ClimateForecastFrame.from_pandas(cast(pd.DataFrame, forecast_frame)),
             actual=DCTelemetryFrame.from_pandas(cast(pd.DataFrame, actual_frame)),
             metadata=metadata,
+            raw_responses=MappingProxyType(
+                {"forecast": forecast_response, "settlement": actual_response}
+            ),
         )

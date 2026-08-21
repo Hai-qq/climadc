@@ -9,6 +9,7 @@ import pytest
 from climadc.adapters.neso import NESOCarbonIntensityAdapter
 from climadc.adapters.openmeteo_history import OpenMeteoHistoryAdapter
 from climadc.errors import ConfigurationError
+from climadc.evidence.sources import RawHTTPResponse
 
 DECISION = pd.Timestamp("2026-08-01T00:00:00Z")
 RETRIEVED = pd.Timestamp("2026-08-06T12:46:02Z")
@@ -74,6 +75,41 @@ def test_openmeteo_history_separates_fixed_lead_forecast_and_estimated_actual() 
     assert set(actual["available_at"]) == {RETRIEVED}
     assert set(actual["quality"]) == {"estimated"}
     assert result.metadata["forecast_timing_basis"].endswith("scenario assumption")
+
+
+def test_reference_adapters_expose_raw_capture_before_parsing() -> None:
+    weather_captures: list[tuple[str, RawHTTPResponse]] = []
+    weather = OpenMeteoHistoryAdapter(
+        transport=lambda url: (
+            _weather_payload("temperature_2m_previous_day1")
+            if "previous-runs-api" in url
+            else _weather_payload("temperature_2m", offset=0.5)
+        ),
+        clock=lambda: RETRIEVED,
+    )
+    weather.fetch(
+        latitude=51.5,
+        longitude=-0.1,
+        site_id="site",
+        decision_time=DECISION,
+        horizon=HORIZON,
+        raw_capture=lambda name, response: weather_captures.append((name, response)),
+    )
+    assert [name for name, _ in weather_captures] == [
+        "openmeteo-forecast.json",
+        "openmeteo-settlement.json",
+    ]
+    assert all(response.capture_kind == "injected_mapping" for _, response in weather_captures)
+
+    neso_captures: list[tuple[str, RawHTTPResponse]] = []
+    NESOCarbonIntensityAdapter(transport=lambda _: _neso_payload(), clock=lambda: RETRIEVED).fetch(
+        site_id="site",
+        decision_time=DECISION,
+        horizon=HORIZON,
+        raw_capture=lambda name, response: neso_captures.append((name, response)),
+    )
+    assert [name for name, _ in neso_captures] == ["neso-carbon.json"]
+    assert neso_captures[0][1].capture_kind == "injected_mapping"
 
 
 def test_openmeteo_history_rejects_missing_slot_and_early_retrieval() -> None:

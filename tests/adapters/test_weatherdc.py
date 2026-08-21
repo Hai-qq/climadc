@@ -14,6 +14,15 @@ from climadc.errors import ConfigurationError
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "weatherdc_small"
 
 
+def _symlink_or_skip(link: Path, target: Path) -> None:
+    try:
+        link.symlink_to(target)
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows symlink privilege is unavailable")
+        raise
+
+
 def _item(payload: bytes, name: str = "source.csv") -> SourceItem:
     return SourceItem(
         name=name,
@@ -121,7 +130,7 @@ def test_download_unlinks_cache_symlink_without_clobbering_target(
     payload = b"verified\n"
     target = tmp_path / "outside.txt"
     target.write_bytes(b"keep me\n")
-    (tmp_path / entry).symlink_to(target)
+    _symlink_or_skip(tmp_path / entry, target)
 
     def downloader(url: str, destination: Path) -> None:
         destination.write_bytes(payload)

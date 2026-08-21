@@ -1,24 +1,25 @@
 schema_version: "1"
 suite_id: gb-london-policy-sensitivity
+suite_type: sensitivity
 aggregation: equal_weight
 scenarios:
   - scenario_id: balanced
-    description: Equal numeric cost and carbon weights with no demand charge
+    description: Monetized objective with an illustrative 1000 GBP/tCO2e carbon price
     study: study.yaml
   - scenario_id: cost-dominant
-    description: Joint objective sensitivity with carbon weight reduced to 0.1
+    description: Monetized objective with an illustrative 100 GBP/tCO2e carbon price
     study: study-cost-dominant.yaml
   - scenario_id: carbon-dominant
-    description: Joint objective sensitivity with cost weight reduced to 0.1
+    description: Monetized objective with an illustrative 10000 GBP/tCO2e carbon price
     study: study-carbon-dominant.yaml
   - scenario_id: demand-charge
-    description: Balanced weights with a synthetic 0.25 GBP/kW peak charge
+    description: 1000 GBP/tCO2e objective with a synthetic 0.25 GBP/kW peak charge
     study: study-demand-charge.yaml
 assumptions:
   purpose: Exercise policy sensitivity to declared objective and demand-charge assumptions
   scenario_weighting: Equal weight; no scenario probabilities are claimed
 limitations:
   - All four scenarios reuse one historical signal and workload snapshot, so this is sensitivity analysis rather than out-of-sample validation.
-  - Objective weights combine unlike quantities and must not be interpreted as exchange rates.
+  - Carbon prices are illustrative sensitivity parameters and must not be interpreted as observed market prices.
   - The synthetic tariff, workload, and demand charge do not establish production savings.
 output_dir: replay-suite-runs

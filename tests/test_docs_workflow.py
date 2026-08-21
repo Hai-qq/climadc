@@ -16,7 +16,10 @@ def test_docs_workflow_builds_on_pr_and_deploys_only_after_main_push() -> None:
     assert any(step.get("run") == "mkdocs build --strict" for step in build_steps)
 
     upload = next(
-        step for step in build_steps if step.get("uses") == "actions/upload-pages-artifact@v3"
+        step
+        for step in build_steps
+        if step.get("uses")
+        == "actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b"
     )
     assert upload["if"] == "github.event_name == 'push'"
     assert upload["with"]["path"] == "site"
@@ -26,4 +29,7 @@ def test_docs_workflow_builds_on_pr_and_deploys_only_after_main_push() -> None:
     assert deploy["needs"] == "build"
     assert deploy["environment"]["name"] == "github-pages"
     assert deploy["permissions"] == {"pages": "write", "id-token": "write"}
-    assert any(step.get("uses") == "actions/deploy-pages@v4" for step in deploy["steps"])
+    assert any(
+        step.get("uses") == "actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e"
+        for step in deploy["steps"]
+    )

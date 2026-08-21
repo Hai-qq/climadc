@@ -104,7 +104,7 @@ def _duration(value: object) -> int:
 def _actual_quality(value: object) -> ActualQuality:
     if value not in {"observed", "estimated"}:
         raise ConfigurationError("actual_quality must be 'observed' or 'estimated'")
-    return value
+    return cast(ActualQuality, value)
 
 
 def _points(

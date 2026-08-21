@@ -30,7 +30,28 @@ REQUIRED = {
     "leakage-report.json",
     "dataset-card.md",
     "report.html",
+    "run-manifest.json",
+    "environment.json",
+    "checksums.sha256",
 }
+
+
+def _symlink_or_skip(link: Path, target: str | Path, *, target_is_directory: bool) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=target_is_directory)
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows symlink privilege is unavailable")
+        raise
+
+
+def _require_symlink_privilege(tmp_path: Path) -> None:
+    target = tmp_path / ".symlink-probe-target"
+    link = tmp_path / ".symlink-probe"
+    target.mkdir()
+    _symlink_or_skip(link, target, target_is_directory=True)
+    link.unlink()
+    target.rmdir()
 
 
 def _result(tmp_path: Path):
@@ -80,7 +101,7 @@ def test_artifact_writer_emits_exact_nonempty_set_and_relative_latest(tmp_path: 
     for payload in (run_manifest, lineage):
         assert payload["run_id"] == run_path.name
         assert payload["study_id"] == result.study_id
-        assert payload["climadc_version"] == "0.2.0a1"
+        assert payload["climadc_version"] == "0.3.0a1"
         assert payload["input_hashes"] == result.input_hashes
         assert payload["config"] == result.config_snapshot
         assert payload["started_at"] == result.started_at.isoformat()
@@ -355,6 +376,7 @@ def test_report_escapes_untrusted_study_text(tmp_path: Path) -> None:
 
 
 def test_pointer_helpers_cover_posix_and_windows_without_platform_mutation(tmp_path: Path) -> None:
+    _require_symlink_privilege(tmp_path)
     runs = tmp_path / "runs"
     run = runs / "run-1"
     run.mkdir(parents=True)
@@ -408,7 +430,7 @@ def test_resolve_latest_rejects_traversal_and_external_targets(
     if windows:
         pointer.write_text(f"{target}\n", encoding="utf-8")
     else:
-        pointer.symlink_to(target, target_is_directory=True)
+        _symlink_or_skip(pointer, target, target_is_directory=True)
 
     with pytest.raises(ConfigurationError, match="direct child"):
         resolve_run_path(pointer, windows=windows)
@@ -424,7 +446,7 @@ def test_resolve_latest_uses_selected_pointer_format(tmp_path: Path) -> None:
         resolve_run_path(pointer, windows=False)
 
     pointer.unlink()
-    pointer.symlink_to("run-1", target_is_directory=True)
+    _symlink_or_skip(pointer, "run-1", target_is_directory=True)
     with pytest.raises(ConfigurationError, match="Windows text"):
         resolve_run_path(pointer, windows=True)
 
@@ -435,7 +457,7 @@ def test_pointer_helpers_reject_direct_child_symlink(tmp_path: Path, windows: bo
     real_run = runs / "run-real"
     linked_run = runs / "run-linked"
     real_run.mkdir(parents=True)
-    linked_run.symlink_to("run-real", target_is_directory=True)
+    _symlink_or_skip(linked_run, "run-real", target_is_directory=True)
 
     with pytest.raises(ConfigurationError, match="real directory"):
         update_latest_pointer(runs, linked_run, windows=windows)
@@ -444,7 +466,7 @@ def test_pointer_helpers_reject_direct_child_symlink(tmp_path: Path, windows: bo
     if windows:
         latest.write_text("run-linked\n", encoding="utf-8")
     else:
-        latest.symlink_to("run-linked", target_is_directory=True)
+        _symlink_or_skip(latest, "run-linked", target_is_directory=True)
     with pytest.raises(ConfigurationError, match="real directory"):
         resolve_run_path(latest, windows=windows)
 
@@ -452,13 +474,14 @@ def test_pointer_helpers_reject_direct_child_symlink(tmp_path: Path, windows: bo
 def test_posix_pointer_does_not_follow_child_retarget_between_checks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _require_symlink_privilege(tmp_path)
     runs = tmp_path / "runs"
     original_run = runs / "run-original"
     other_run = runs / "run-other"
     original_run.mkdir(parents=True)
     other_run.mkdir()
     latest = runs / "latest"
-    latest.symlink_to("run-original", target_is_directory=True)
+    _symlink_or_skip(latest, "run-original", target_is_directory=True)
     original_is_dir = Path.is_dir
     retargeted = False
 
@@ -468,7 +491,7 @@ def test_posix_pointer_does_not_follow_child_retarget_between_checks(
         if path == original_run and not retargeted:
             retargeted = True
             original_run.rename(runs / "run-original-backup")
-            original_run.symlink_to("run-other", target_is_directory=True)
+            _symlink_or_skip(original_run, "run-other", target_is_directory=True)
         return result
 
     monkeypatch.setattr(Path, "is_dir", retarget_after_directory_check)

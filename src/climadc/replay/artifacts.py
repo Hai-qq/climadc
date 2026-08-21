@@ -14,9 +14,12 @@ import pandas as pd
 import yaml
 
 from climadc import __version__
+from climadc.evidence.manifest import SolverRecord
+from climadc.evidence.writer import finalize_evidence
 from climadc.errors import ConfigurationError
 from climadc.replay.html import render_replay_report
 from climadc.replay.manifest import SourceManifest, sha256_file
+from climadc.replay.models import pareto_policy_name
 from climadc.replay.rolling import RollingReplayResult
 from climadc.replay.study import ReplayStudyResult, assumptions_payload
 from climadc.reporting.artifacts import update_latest_pointer
@@ -35,6 +38,9 @@ REPLAY_ARTIFACTS = frozenset(
         "solver-status.json",
         "replay-metrics.json",
         "report.html",
+        "run-manifest.json",
+        "environment.json",
+        "checksums.sha256",
     }
 )
 
@@ -73,6 +79,39 @@ def replay_metrics_payload(result: ReplayStudyResult) -> dict[str, object]:
         mode = "single_window"
         decision_count = 1
         commit_interval = None
+    policies = result.replay.metrics.to_dict(orient="records")
+    pareto_points: list[dict[str, object]] = []
+    objective = result.config.replay.objective
+    if objective is not None and objective.mode == "pareto_analysis":
+        candidates = [row for row in policies if str(row["policy"]).startswith("pareto_cp_")]
+        for row in candidates:
+            policy = str(row["policy"])
+            price = next(
+                value
+                for value in objective.carbon_prices_currency_per_tco2e
+                if policy == pareto_policy_name(value)
+            )
+            cost = float(row["energy_cost"])
+            emissions = float(row["estimated_location_based_emissions_kgco2e"])
+            efficient = not any(
+                float(other["energy_cost"]) <= cost
+                and float(other["estimated_location_based_emissions_kgco2e"]) <= emissions
+                and (
+                    float(other["energy_cost"]) < cost
+                    or float(other["estimated_location_based_emissions_kgco2e"]) < emissions
+                )
+                for other in candidates
+            )
+            pareto_points.append(
+                {
+                    "policy": policy,
+                    "carbon_price_currency_per_tco2e": price,
+                    "energy_cost": cost,
+                    "estimated_location_based_emissions_kgco2e": emissions,
+                    "peak_kw": float(row["peak_kw"]),
+                    "pareto_efficient": efficient,
+                }
+            )
     return {
         "schema_version": "1",
         "study_id": result.config.study_id,
@@ -84,15 +123,17 @@ def replay_metrics_payload(result: ReplayStudyResult) -> dict[str, object]:
             "facility_energy_kwh": "kWh",
             "it_energy_kwh": "kWh",
             "cooling_energy_kwh": "kWh",
-            "emissions_kgco2e": "kgCO2e",
+            "estimated_location_based_emissions_kgco2e": "kgCO2e",
             "energy_cost": result.replay.currency,
             "peak_kw": "kW",
-            "objective_regret": "weighted comparison score",
+            "objective_regret": result.replay.currency,
         },
+        "objective": result.config.replay.objective_payload(),
         "accepted_jobs": result.replay.accepted_jobs,
         "future_jobs": result.replay.future_jobs,
         "forecast": result.forecast_metrics,
-        "policies": result.replay.metrics.to_dict(orient="records"),
+        "policies": policies,
+        "pareto_frontier": pareto_points,
         "violations": {policy: list(items) for policy, items in result.replay.violations.items()},
     }
 
@@ -206,7 +247,7 @@ def _validate_metric_reconstruction(
             ("facility_energy_kwh", facility_energy),
             ("it_energy_kwh", it_energy),
             ("cooling_energy_kwh", cooling_energy),
-            ("emissions_kgco2e", emissions),
+            ("estimated_location_based_emissions_kgco2e", emissions),
             ("energy_charge", energy_charge),
             ("demand_charge", demand_charge),
             ("energy_cost", energy_charge + demand_charge),
@@ -357,14 +398,13 @@ class ReplayArtifactWriter:
                 numeric = actual.select_dtypes(include=[np.number]).to_numpy(dtype=float)
                 if numeric.size and np.isinf(numeric).any():
                     raise ValueError(f"{name} contains an infinite numeric value")
+            replay_config = result.config.replay.to_replay_config()
             _validate_metric_reconstruction(
                 cast(list[dict[str, object]], metrics["policies"]),
                 pd.read_parquet(directory / "profiles.parquet"),
                 pd.read_parquet(directory / "schedules.parquet"),
-                interval_hours=float(
-                    result.config.replay.to_replay_config().interval / pd.Timedelta("1h")
-                ),
-                demand_charge_per_kw=result.config.replay.demand_charge_per_kw,
+                interval_hours=float(replay_config.interval / pd.Timedelta("1h")),
+                demand_charge_per_kw=replay_config.demand_charge_per_kw,
             )
             report = (directory / "report.html").read_text(encoding="utf-8")
             if report != render_replay_report(result, run_id):
@@ -392,7 +432,43 @@ class ReplayArtifactWriter:
                 raise ConfigurationError(f"Replay run directory already exists: {final}")
             temporary = Path(tempfile.mkdtemp(prefix=".climadc-replay-", dir=runs_dir))
             self._write(temporary, result, run_id)
+            published_manifest = SourceManifest.from_yaml(temporary / "source-manifest.yaml")
+            canonical_hashes = {
+                str(record.artifact): record.sha256 for record in published_manifest.records
+            }
+            finalize_evidence(
+                temporary,
+                run_type="replay",
+                run_id=run_id,
+                study_id=result.config.study_id,
+                started_at=result.started_at,
+                config_sha256=result.config_sha256,
+                input_hashes=canonical_hashes,
+                solver=SolverRecord(
+                    name="SciPy HiGHS",
+                    method=(
+                        "scipy.optimize.linprog(method=highs), then fixed-aggregate "
+                        "job-allocation tie-break"
+                    ),
+                    options={
+                        "primal_feasibility_tolerance": 1e-10,
+                        "allocation_tie_break": (
+                            "ASAP priority/deadline/release/job_id at fixed aggregate slot power"
+                        ),
+                    },
+                ),
+            )
             self._validate(temporary, result, run_id)
+            from climadc.evidence.verify import verify_run
+
+            verification = verify_run(temporary)
+            if not verification.valid:
+                failures = [
+                    check.message for check in verification.checks if check.status == "fail"
+                ]
+                raise ConfigurationError(
+                    f"Independent replay verification failed: {'; '.join(failures)}"
+                )
             temporary.rename(final)
             published = True
             update_latest_pointer(runs_dir, final)

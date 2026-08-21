@@ -1,0 +1,51 @@
+schema_version: "1"
+claims:
+  - claim_id: E0-WEATHERDC-SANITY-001
+    exact_text: >-
+      On the project-generated WeatherDC small fixture, the weather-aware OLS synthetic pipeline
+      sanity check produced MAE 0.000000321 kW, RMSE 0.000000409 kW, and WAPE 0.00000000475.
+    evidence_level: E0
+    scenario_or_study_id: weatherdc-kasetsart-small-reference
+    metric: cooling_power.weatherdc point metrics
+    baseline: legal last-observation persistence on the same eight test timestamps
+    code_commit: 2918c05365e0d6d6be89db3f7a8a42b232329fcf
+    code_dirty: false
+    config_sha256: d11238394b28ead2fcca0fcad3fae61f98a21993f55a0dffcdf49e8f6b40a41c
+    input_hashes:
+      climate: bf134a50214574105fe34ad9107961b005a011eb2f1824c9ac3a42433fb680e0
+      telemetry: 03ba2213f1ad89c2e3410fdac43c33426fe59b0979ae316e3b35f3aba42a6e24
+      workload: f9edc0d3158c1c67b3464051a4796d187807c47cad1368a560f7c653b52da629
+      weatherdc_reference_implementation: ff0f3fdb6e812c0898d52a5691cee28289d06e46271d0d2c1ab6eb0129a7da17
+    output_artifact: benchmarks/reference/weatherdc_small/summary.json
+    output_sha256: 3f656c43b36e8258e2bd000ed64fd2c81cac6e5840046337524f72a4c26e1b3f
+    reproduction_command: python benchmarks/reference/weatherdc_small/reproduce.py --check
+    limitations:
+      - The inputs are project-generated and contain a deliberately near-linear relationship.
+      - The claim config hash identifies benchmarks/weatherdc.yaml; each generated bundle separately records its path-resolved run config hash.
+      - Fresh OLS metrics are compared with the compact reference at a declared 1e-12 absolute tolerance for cross-platform LAPACK rounding.
+      - This is not model accuracy evidence on Kasetsart operational data.
+    status: illustrative
+  - claim_id: E1-LONDON-TRADEOFF-001
+    exact_text: >-
+      In the single-day London E1 mechanism fixture, the price policy changed declared-scenario cost
+      by -28.3185 GBP and estimated location-based emissions by +41.78469375 kgCO2e versus ASAP.
+    evidence_level: E1
+    scenario_or_study_id: gb-london-carbon-shift-24h
+    metric: price.energy_cost_change_vs_asap and price.estimated_location_based_emissions_change_vs_asap_kgco2e
+    baseline: ASAP under the same fixture, capacity, deadlines, and settlement signals
+    code_commit: 5ca987a3a585779b1eef75efc53d412fce7e3538
+    code_dirty: false
+    config_sha256: f32e92733c68c469513393204a3cd703b37ff5500f44c4f7d1f9c35baced879e
+    input_hashes:
+      actual-weather.csv: 4c853d7cff2376bd1e86d7f840aa90e71457e7cfa25ca04a6c2b30eb8d946441
+      climate-forecast.csv: aec2c0a6a6ae292afe3ec69f5b3756153160e929de7e433c4714ccd05897beff
+      grid-signals.csv: 0ddda011b3268f8eeb0e9ea3de785c4b181845f1a00ee2d90b5c53d40f59b4b8
+      workload.csv: 53add7e8b53447a6969125d0e48d5042e8a43d424b80f5fdd1da7543846ae768
+    output_artifact: benchmarks/reference/gb_london_24h/summary.json
+    output_sha256: c0c63779bd7cfce4139a63e537391b6a1b2a3d401d113c932124414581b6bf25
+    reproduction_command: python benchmarks/reference/gb_london_24h/reproduce.py --check
+    limitations:
+      - The workload, tariff, facility model, and illustrative carbon price are declared assumptions.
+      - Weather and national carbon settlement values are estimates rather than site measurements.
+      - One day does not establish robustness, operational savings, or marginal avoided emissions.
+    status: illustrative

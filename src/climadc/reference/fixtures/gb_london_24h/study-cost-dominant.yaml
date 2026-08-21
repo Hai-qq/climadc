@@ -13,9 +13,11 @@ replay:
   interval: 1h
   it_capacity_kw: 500
   fixed_it_power_kw: 300
-  cost_weight: 1
-  carbon_weight: 0.1
-  demand_charge_per_kw: 0
+  objective:
+    version: "1"
+    mode: monetized
+    carbon_price_currency_per_tco2e: 100
+    demand_charge_per_kw: 0
   tolerance_kwh: 1.0e-7
 facility_model:
   kind: temperature_sensitive_pue
@@ -27,10 +29,10 @@ facility_model:
 assumptions:
   location: London, United Kingdom
   scenario_variant: Cost-dominant joint objective sensitivity
-  tariff: Declared time-of-use scenario; not a supplier tariff or observed bill
+  tariff: Declared UTC time-of-use scenario; not a supplier tariff or observed bill
   workload: Deterministic project-owned batch-job fixture
 limitations:
   - This scenario reuses one historical signal and workload snapshot; it is not an independent sample.
-  - Objective weights combine unlike quantities and are sensitivity parameters, not currency conversion factors.
+  - The illustrative 100 GBP/tCO2e carbon price is a sensitivity parameter, not a market price.
   - The tariff and workload are synthetic scenario inputs, so results are not production savings.
 output_dir: replay-runs
