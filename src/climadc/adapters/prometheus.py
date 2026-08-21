@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from numbers import Real
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, cast
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import pandas as pd
@@ -120,7 +120,7 @@ def _finite_number(value: object, field: str) -> float:
 def _quality(value: object) -> TelemetryQuality:
     if value not in {"observed", "estimated"}:
         raise ConfigurationError("quality must be 'observed' or 'estimated'")
-    return value
+    return cast(TelemetryQuality, value)
 
 
 def _device_id(labels: Mapping[object, object], device_labels: tuple[str, ...]) -> str:

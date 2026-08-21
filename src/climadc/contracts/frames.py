@@ -147,10 +147,14 @@ def _validate_numeric(frame: pd.DataFrame, column: str, contract_name: str) -> N
 
 
 def _validate_quantiles(frame: pd.DataFrame, contract_name: str) -> None:
-    invalid = pd.Series(False, index=frame.index, dtype=bool)
-    present = frame["quantile"].notna()
-    for index, value in frame.loc[present, "quantile"].items():
-        invalid.loc[index] = not _is_real_number(value) or not 0 < float(value) < 1
+    invalid = pd.Series(
+        [
+            False if pd.isna(value) else not _is_real_number(value) or not 0 < float(value) < 1
+            for value in frame["quantile"]
+        ],
+        index=frame.index,
+        dtype=bool,
+    )
     _raise_row_error(contract_name, "quantile must be strictly inside (0, 1)", invalid)
 
 

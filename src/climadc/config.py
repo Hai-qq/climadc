@@ -56,7 +56,7 @@ class BacktestConfig(BaseModel):
 
 
 class ModelConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
 
     kind: Literal["persistence", "seasonal", "climatology", "linear", "lightgbm"]
     model_id: str = Field(min_length=1)

@@ -55,10 +55,10 @@ def _deep_copy_frame(frame: pd.DataFrame) -> pd.DataFrame:
                 categories=categories,
                 ordered=categorical.ordered,
             )
-            copied.isetitem(position, pd.Series(categorical_values, index=copied.index))
+            copied.isetitem(position, pd.Series(categorical_values, index=copied.index).array)
         elif pd.api.types.is_object_dtype(dtype):
             values = [deepcopy(value) for value in frame.iloc[:, position].tolist()]
-            copied.isetitem(position, pd.Series(values, index=frame.index, dtype=object))
+            copied.isetitem(position, pd.Series(values, index=frame.index, dtype=object).array)
     return copied
 
 
