@@ -115,9 +115,13 @@ def test_golden_comparators_enforce_declared_tolerance() -> None:
     namespace = runpy.run_path(
         str(ROOT / "benchmarks" / "reference" / "gb_london_24h" / "reproduce.py")
     )
+    weather_namespace = runpy.run_path(
+        str(ROOT / "benchmarks" / "reference" / "weatherdc_small" / "reproduce.py")
+    )
     json_equivalent = namespace["_json_equivalent"]
     csv_equivalent = namespace["_csv_equivalent"]
     first_difference = namespace["_first_difference"]
+    weather_equivalent = weather_namespace["_equivalent"]
 
     assert json_equivalent('{"metric": 1.0}', '{"metric": 1.000000005}')
     assert not json_equivalent('{"metric": 1.0}', '{"metric": 1.00000002}')
@@ -127,3 +131,5 @@ def test_golden_comparators_enforce_declared_tolerance() -> None:
     assert first_difference({"metric": 1.0}, {"metric": 1.00000002}).startswith(
         "$.metric: expected 1.0, generated 1.00000002, absolute difference "
     )
+    assert weather_equivalent({"metric": 1.0}, {"metric": 1.0000000000005})
+    assert not weather_equivalent({"metric": 1.0}, {"metric": 1.000000000002})
