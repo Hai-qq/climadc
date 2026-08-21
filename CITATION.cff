@@ -6,7 +6,7 @@ authors:
   - family-names: "Hai-qq"
     # TODO: replace the account name with verified given/family names and add ORCID/affiliation.
 version: "0.3.0-alpha.1"
-# TODO: add date-released only when the release is actually published.
+date-released: 2026-08-21
 repository-code: "https://github.com/Hai-qq/climadc"
 url: "https://github.com/Hai-qq/climadc"
 license: Apache-2.0

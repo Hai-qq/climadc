@@ -6,7 +6,7 @@ The project follows [Semantic Versioning](https://semver.org/). Alpha APIs may c
 
 ## [Unreleased]
 
-## [0.3.0-alpha.1] - Unreleased
+## [0.3.0-alpha.1] - 2026-08-21
 
 ### Added
 
