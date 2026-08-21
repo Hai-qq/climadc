@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import cast
 
@@ -17,7 +17,12 @@ from climadc.contracts import (
 )
 from climadc.errors import ConfigurationError, ContractError
 from climadc.replay.inputs import PreparedReplayInputs, prepare_replay_inputs
-from climadc.replay.models import FacilityEnergyModel, ReplayConfig
+from climadc.replay.models import (
+    FacilityEnergyModel,
+    ReplayConfig,
+    pareto_carbon_price,
+    pareto_policy_name,
+)
 
 POLICY_NAMES = ("asap", "peak", "price", "carbon", "joint", "oracle")
 RISK_AWARE_POLICY = "risk_aware"
@@ -60,7 +65,7 @@ _METRIC_COLUMNS = (
     "facility_energy_kwh",
     "it_energy_kwh",
     "cooling_energy_kwh",
-    "emissions_kgco2e",
+    "estimated_location_based_emissions_kgco2e",
     "energy_charge",
     "demand_charge",
     "energy_cost",
@@ -71,11 +76,20 @@ _METRIC_COLUMNS = (
     "energy_balance_error_kwh",
     "shifted_energy_kwh",
     "energy_cost_change_vs_asap",
-    "emissions_change_vs_asap_kgco2e",
+    "estimated_location_based_emissions_change_vs_asap_kgco2e",
     "peak_change_vs_asap_kw",
     "realized_objective",
     "objective_regret",
 )
+
+
+def replay_policy_names(config: ReplayConfig) -> tuple[str, ...]:
+    if config.objective_mode == "pareto_analysis":
+        points = tuple(
+            pareto_policy_name(price) for price in config.pareto_carbon_prices_currency_per_tco2e
+        )
+        return (*POLICY_NAMES[:4], *points, "oracle")
+    return ALL_POLICY_NAMES if config.risk_quantile is not None else POLICY_NAMES
 
 
 @dataclass(frozen=True)
@@ -128,7 +142,11 @@ class ReplayResult:
             raise ContractError("ReplayResult future_jobs must be a nonnegative integer")
         checked_violations: dict[str, tuple[str, ...]] = {}
         for policy, items in violations.items():
-            if policy not in ALL_POLICY_NAMES or any(not isinstance(item, str) for item in items):
+            if (
+                not isinstance(policy, str)
+                or not policy
+                or any(not isinstance(item, str) for item in items)
+            ):
                 raise ContractError("ReplayResult violations are invalid")
             checked_violations[policy] = tuple(items)
         object.__setattr__(self, "_status", status.copy(deep=True))
@@ -207,6 +225,9 @@ def _constraints(
     prepared: PreparedReplayInputs,
     config: ReplayConfig,
     pue: np.ndarray,
+    *,
+    policy: str,
+    carbon_kgco2e_per_kwh: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[tuple[float, float | None]]]:
     job_count = len(prepared.jobs)
     slot_count = len(prepared.slots)
@@ -235,7 +256,53 @@ def _constraints(
         a_ub[slot_count + slot_index, job_variables] = pue[slot_index]
         a_ub[slot_count + slot_index, peak_index] = -1.0
         b_ub[slot_count + slot_index] = -pue[slot_index] * config.fixed_it_power_kw
+    if config.objective_mode == "epsilon_constraint":
+        extra_rows: list[np.ndarray] = []
+        extra_bounds: list[float] = []
+        if config.emissions_upper_bound_kgco2e is not None:
+            constraint_row = np.zeros(variable_count, dtype=float)
+            slot_coefficients = pue * carbon_kgco2e_per_kwh * prepared.interval_hours
+            for job_index in range(job_count):
+                start = job_index * slot_count
+                constraint_row[start : start + slot_count] = slot_coefficients
+            fixed_emissions = float(np.sum(slot_coefficients * config.fixed_it_power_kw))
+            extra_rows.append(constraint_row)
+            extra_bounds.append(config.emissions_upper_bound_kgco2e - fixed_emissions)
+        if config.peak_upper_bound_kw is not None:
+            constraint_row = np.zeros(variable_count, dtype=float)
+            constraint_row[peak_index] = 1.0
+            extra_rows.append(constraint_row)
+            extra_bounds.append(config.peak_upper_bound_kw)
+        if extra_rows:
+            a_ub = np.vstack([a_ub, *extra_rows])
+            b_ub = np.concatenate([b_ub, np.asarray(extra_bounds, dtype=float)])
     return a_eq, b_eq, a_ub, b_ub, bounds
+
+
+def _joint_slot_cost(
+    *,
+    config: ReplayConfig,
+    policy: str,
+    pue: np.ndarray,
+    price_per_kwh: np.ndarray,
+    carbon_kgco2e_per_kwh: np.ndarray,
+) -> tuple[np.ndarray, float]:
+    pareto_price = pareto_carbon_price(policy, config)
+    if config.objective_mode == "legacy_unscaled":
+        return (
+            pue
+            * (config.cost_weight * price_per_kwh + config.carbon_weight * carbon_kgco2e_per_kwh),
+            config.cost_weight * config.demand_charge_per_kw,
+        )
+    if config.objective_mode == "epsilon_constraint":
+        return pue * price_per_kwh, config.demand_charge_per_kw
+    carbon_price = config.carbon_price_currency_per_tco2e if pareto_price is None else pareto_price
+    if config.objective_mode == "pareto_analysis" and pareto_price is None:
+        carbon_price = config.pareto_carbon_prices_currency_per_tco2e[0]
+    return (
+        pue * (price_per_kwh + carbon_price * carbon_kgco2e_per_kwh / 1000.0),
+        config.demand_charge_per_kw,
+    )
 
 
 def _objective(
@@ -285,12 +352,14 @@ def _objective(
         elif policy == "carbon":
             slot_cost = forecast_pue * prepared.forecast_carbon_kgco2e_per_kwh
             peak_cost = 0.0
-        elif policy == "joint":
-            slot_cost = forecast_pue * (
-                config.cost_weight * prepared.forecast_price_per_kwh
-                + config.carbon_weight * prepared.forecast_carbon_kgco2e_per_kwh
+        elif policy == "joint" or pareto_carbon_price(policy, config) is not None:
+            slot_cost, peak_cost = _joint_slot_cost(
+                config=config,
+                policy=policy,
+                pue=forecast_pue,
+                price_per_kwh=prepared.forecast_price_per_kwh,
+                carbon_kgco2e_per_kwh=prepared.forecast_carbon_kgco2e_per_kwh,
             )
-            peak_cost = config.cost_weight * config.demand_charge_per_kw
         elif policy == RISK_AWARE_POLICY:
             if (
                 risk_pue is None
@@ -300,17 +369,21 @@ def _objective(
                 raise ConfigurationError(
                     "risk-aware policy requires temperature, price, and carbon quantile forecasts"
                 )
-            slot_cost = risk_pue * (
-                config.cost_weight * prepared.risk_price_per_kwh
-                + config.carbon_weight * prepared.risk_carbon_kgco2e_per_kwh
+            slot_cost, peak_cost = _joint_slot_cost(
+                config=config,
+                policy=policy,
+                pue=risk_pue,
+                price_per_kwh=prepared.risk_price_per_kwh,
+                carbon_kgco2e_per_kwh=prepared.risk_carbon_kgco2e_per_kwh,
             )
-            peak_cost = config.cost_weight * config.demand_charge_per_kw
         elif policy == "oracle":
-            slot_cost = actual_pue * (
-                config.cost_weight * prepared.actual_price_per_kwh
-                + config.carbon_weight * prepared.actual_carbon_kgco2e_per_kwh
+            slot_cost, peak_cost = _joint_slot_cost(
+                config=config,
+                policy=policy,
+                pue=actual_pue,
+                price_per_kwh=prepared.actual_price_per_kwh,
+                carbon_kgco2e_per_kwh=prepared.actual_carbon_kgco2e_per_kwh,
             )
-            peak_cost = config.cost_weight * config.demand_charge_per_kw
         else:
             raise ConfigurationError(f"unknown replay policy: {policy}")
         for job_index in range(job_count):
@@ -331,7 +404,21 @@ def _solve_policy(
     coefficients, constraint_pue = _objective(
         policy, prepared, config, forecast_pue, risk_pue, actual_pue
     )
-    a_eq, b_eq, a_ub, b_ub, bounds = _constraints(prepared, config, constraint_pue)
+    if policy == "oracle":
+        constraint_carbon = prepared.actual_carbon_kgco2e_per_kwh
+    elif policy == RISK_AWARE_POLICY:
+        if prepared.risk_carbon_kgco2e_per_kwh is None:
+            raise ConfigurationError("risk-aware policy requires carbon quantile forecasts")
+        constraint_carbon = prepared.risk_carbon_kgco2e_per_kwh
+    else:
+        constraint_carbon = prepared.forecast_carbon_kgco2e_per_kwh
+    a_eq, b_eq, a_ub, b_ub, bounds = _constraints(
+        prepared,
+        config,
+        constraint_pue,
+        policy=policy,
+        carbon_kgco2e_per_kwh=constraint_carbon,
+    )
     result = linprog(
         coefficients,
         A_ub=a_ub,
@@ -497,7 +584,7 @@ def _base_metrics(
         "facility_energy_kwh": facility_energy,
         "it_energy_kwh": it_energy,
         "cooling_energy_kwh": cooling_energy,
-        "emissions_kgco2e": emissions,
+        "estimated_location_based_emissions_kgco2e": emissions,
         "energy_charge": energy_charge,
         "demand_charge": demand_charge,
         "energy_cost": energy_cost,
@@ -506,7 +593,9 @@ def _base_metrics(
         "deadline_violations": deadline_violations,
         "unserved_energy_kwh": float(np.sum(deficits)),
         "energy_balance_error_kwh": energy_balance_error,
-        "realized_objective": (config.cost_weight * energy_cost + config.carbon_weight * emissions),
+        "realized_objective": config.realized_objective_for_policy(
+            solution.policy, energy_cost, emissions
+        ),
     }
 
 
@@ -583,7 +672,7 @@ class ReplayEngine:
                 slots=len(prepared.slots),
                 label="risk",
             )
-        policies = ALL_POLICY_NAMES if config.risk_quantile is not None else POLICY_NAMES
+        policies = replay_policy_names(config)
         violations = _global_violations(prepared, config)
         if violations:
             return _infeasible_result(violations=violations, prepared=prepared, policies=policies)
@@ -614,7 +703,40 @@ class ReplayEngine:
         asap_allocation = allocation_by_policy["asap"]
         metric_by_policy = {str(row["policy"]): row for row in metrics}
         asap_metrics = metric_by_policy["asap"]
-        oracle_objective = float(metric_by_policy["oracle"]["realized_objective"])
+        oracle_objectives = {
+            policy: float(metric_by_policy["oracle"]["realized_objective"]) for policy in policies
+        }
+        if config.objective_mode == "pareto_analysis":
+            for policy in policies:
+                price = pareto_carbon_price(policy, config)
+                if price is None:
+                    continue
+                point_config = replace(
+                    config,
+                    objective_mode="monetized",
+                    carbon_price_currency_per_tco2e=price,
+                    pareto_carbon_prices_currency_per_tco2e=(),
+                )
+                oracle_solution = _solve_policy(
+                    "oracle",
+                    prepared,
+                    point_config,
+                    forecast_pue,
+                    risk_pue,
+                    actual_pue,
+                )
+                if not oracle_solution.feasible:
+                    raise ContractError(f"Pareto Oracle solve failed at carbon price {price}")
+                oracle_profile = _profile_frame(
+                    oracle_solution,
+                    prepared,
+                    point_config,
+                    forecast_pue,
+                    risk_pue,
+                    actual_pue,
+                )
+                oracle_row = _base_metrics(oracle_solution, oracle_profile, prepared, point_config)
+                oracle_objectives[policy] = float(oracle_row["realized_objective"])
         for row in metrics:
             policy = str(row["policy"])
             shifted = (
@@ -622,6 +744,7 @@ class ReplayEngine:
                 * float(np.sum(np.abs(allocation_by_policy[policy] - asap_allocation)))
                 * prepared.interval_hours
             )
+            oracle_objective = oracle_objectives[policy]
             regret = float(row["realized_objective"]) - oracle_objective
             objective_tolerance = 1e-9 * max(
                 1.0, abs(oracle_objective), abs(float(row["realized_objective"]))
@@ -635,8 +758,10 @@ class ReplayEngine:
                     "shifted_energy_kwh": shifted,
                     "energy_cost_change_vs_asap": float(row["energy_cost"])
                     - float(asap_metrics["energy_cost"]),
-                    "emissions_change_vs_asap_kgco2e": float(row["emissions_kgco2e"])
-                    - float(asap_metrics["emissions_kgco2e"]),
+                    "estimated_location_based_emissions_change_vs_asap_kgco2e": float(
+                        row["estimated_location_based_emissions_kgco2e"]
+                    )
+                    - float(asap_metrics["estimated_location_based_emissions_kgco2e"]),
                     "peak_change_vs_asap_kw": float(row["peak_kw"])
                     - float(asap_metrics["peak_kw"]),
                     "objective_regret": regret,

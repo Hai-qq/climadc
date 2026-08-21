@@ -23,6 +23,12 @@ _RISK_SIGNAL_LABELS = {
 }
 
 
+def _policy_label(policy: str) -> str:
+    if policy.startswith("pareto_cp_"):
+        return f"Pareto point ({policy.removeprefix('pareto_cp_').replace('p', '.')} /tCO₂e)"
+    return _LABELS.get(policy, policy)
+
+
 def _number(value: object, digits: int = 2) -> str:
     return f"{float(cast(Any, value)):,.{digits}f}"
 
@@ -34,15 +40,15 @@ def _policy_rows(result: ReplayStudyResult) -> str:
     for _, metric in result.replay.metrics.iterrows():
         policy = str(metric["policy"])
         cost_change = float(metric["energy_cost_change_vs_asap"])
-        emissions_change = float(metric["emissions_change_vs_asap_kgco2e"])
+        emissions_change = float(metric["estimated_location_based_emissions_change_vs_asap_kgco2e"])
         peak_change = float(metric["peak_change_vs_asap_kw"])
         change_class = "neutral" if policy == "asap" else ""
         rows.append(
             "<tr>"
-            f"<th>{escape(_LABELS.get(policy, policy))}</th>"
+            f"<th>{escape(_policy_label(policy))}</th>"
             f"<td>{_number(metric['facility_energy_kwh'])}</td>"
             f"<td>{_number(metric['cooling_energy_kwh'])}</td>"
-            f"<td>{_number(metric['emissions_kgco2e'])}</td>"
+            f"<td>{_number(metric['estimated_location_based_emissions_kgco2e'])}</td>"
             f"<td>{_number(metric['energy_cost'])}</td>"
             f"<td>{_number(metric['peak_kw'])}</td>"
             f'<td class="{change_class}">{_number(cost_change)}</td>'
@@ -162,8 +168,7 @@ def _assumption_rows(result: ReplayStudyResult) -> str:
     rows: list[tuple[str, object]] = [
         ("Horizon / interval", f"{replay.horizon} / {replay.interval}"),
         ("IT capacity / fixed IT", f"{replay.it_capacity_kw} kW / {replay.fixed_it_power_kw} kW"),
-        ("Cost / carbon weights", f"{replay.cost_weight} / {replay.carbon_weight}"),
-        ("Demand charge", f"{replay.demand_charge_per_kw} {result.replay.currency}/kW"),
+        ("Objective contract", replay.objective_payload()),
         ("Risk quantile", replay.risk_quantile if replay.risk_quantile is not None else "disabled"),
         (
             "Facility model",
@@ -193,7 +198,7 @@ def _assumption_rows(result: ReplayStudyResult) -> str:
 def _solver_rows(result: ReplayStudyResult) -> str:
     return "".join(
         "<tr>"
-        f"<th>{escape(_LABELS.get(str(row['policy']), str(row['policy'])))}</th>"
+        f"<th>{escape(_policy_label(str(row['policy'])))}</th>"
         f"<td>{'yes' if bool(row['feasible']) else 'no'}</td>"
         f"<td>{escape(str(row['solver_status']))}</td>"
         f"<td>{escape(str(row['message']))}</td>"
@@ -211,6 +216,66 @@ def _violation_summary(result: ReplayStudyResult) -> str:
     if not violations:
         return "<p>No replay constraint violations were reported.</p>"
     return "<ul>" + "".join(f"<li>{escape(item)}</li>" for item in violations) + "</ul>"
+
+
+def _machine_report_payload(result: ReplayStudyResult) -> str:
+    payload = {
+        "schema_version": "1",
+        "objective": result.config.replay.objective_payload(),
+        "policies": result.replay.metrics.to_dict(orient="records"),
+    }
+    text = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+        default=lambda value: cast(Any, value).item(),
+    )
+    return escape(text, quote=False)
+
+
+def _objective_note(result: ReplayStudyResult) -> str:
+    payload = result.config.replay.objective_payload()
+    if payload["mode"] == "legacy_unscaled":
+        return (
+            "The legacy score is dimensionally unscaled, deprecated, and is neither a currency "
+            "value nor a unified utility improvement."
+        )
+    if payload["mode"] == "epsilon_constraint":
+        return "The objective is monetary cost subject to the declared decision-basis bounds."
+    if payload["mode"] == "pareto_analysis":
+        return (
+            "Every declared carbon-price point is shown; no single preferred point is selected. "
+            "Objective and regret values use the currency shown above."
+        )
+    return "The monetized objective and regret values use the currency shown above."
+
+
+def _pareto_section(result: ReplayStudyResult) -> str:
+    objective = result.config.replay.objective
+    if objective is None or objective.mode != "pareto_analysis":
+        return ""
+    rows = []
+    metrics = result.replay.metrics.set_index("policy")
+    for price in objective.carbon_prices_currency_per_tco2e:
+        policy = f"pareto_cp_{format(price, '.12g').replace('.', 'p')}"
+        metric = metrics.loc[policy]
+        rows.append(
+            "<tr>"
+            f"<th>{_number(price, 2)}</th>"
+            f"<td>{_number(metric['energy_cost'])}</td>"
+            f"<td>{_number(metric['estimated_location_based_emissions_kgco2e'])}</td>"
+            f"<td>{_number(metric['peak_kw'])}</td>"
+            "</tr>"
+        )
+    return (
+        "<section><h2>Declared multi-point analysis</h2>"
+        '<p class="muted">Complete fixed carbon-price sweep; rows are not filtered by outcome.</p>'
+        '<div class="table-wrap"><table class="metrics">'
+        "<thead><tr><th>Carbon price /tCO₂e</th><th>Cost</th><th>Estimated location-based "
+        "kgCO₂e</th><th>Peak kW</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table></div></section>"
+    )
 
 
 def render_replay_report(result: ReplayStudyResult, run_id: str) -> str:
@@ -275,6 +340,7 @@ def render_replay_report(result: ReplayStudyResult, run_id: str) -> str:
   </style>
 </head>
 <body><main>
+  <template id="climadc-report-data">{_machine_report_payload(result)}</template>
   <header>
     <span class="badge">{status}</span>
     <h1>ClimaDC engineering replay</h1>
@@ -293,7 +359,7 @@ def render_replay_report(result: ReplayStudyResult, run_id: str) -> str:
     </div>
     <p>{_forecast_summary(result)}</p>
   </section>
-  {_risk_diagnostics_section(result)}
+    {_risk_diagnostics_section(result)}
   <section>
     <h2>Declared assumptions</h2>
     <div class="table-wrap"><table>
@@ -304,8 +370,7 @@ def render_replay_report(result: ReplayStudyResult, run_id: str) -> str:
   <section>
     <h2>Realized settlement by policy</h2>
     <p class="muted">Changes are signed relative to ASAP: negative cost, emissions, or peak values
-      are reductions; positive values are increases. The objective score combines unlike quantities
-      using the declared weights and is not a currency value.{oracle_note}</p>
+      are reductions; positive values are increases. {_objective_note(result)}{oracle_note}</p>
     <div class="table-wrap"><table class="metrics">
       <thead><tr><th>Policy</th><th>Facility kWh</th><th>Cooling kWh</th><th>kgCO₂e</th>
       <th>Cost ({currency})</th><th>Peak kW</th><th>Δ cost</th><th>Δ kgCO₂e</th>
@@ -313,6 +378,7 @@ def render_replay_report(result: ReplayStudyResult, run_id: str) -> str:
       <tbody>{_policy_rows(result)}</tbody>
     </table></div>
   </section>
+  {_pareto_section(result)}
   <section>
     <h2>Solver and constraints</h2>
     <div class="table-wrap"><table>

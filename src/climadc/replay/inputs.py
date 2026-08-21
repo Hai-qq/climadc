@@ -375,9 +375,9 @@ def _prepare_jobs(
 
     slot_ends = slots + config.interval
     eligible = np.zeros((len(jobs), len(slots)), dtype=bool)
-    for job_index, row in jobs.iterrows():
+    for job_position, (_, row) in enumerate(jobs.iterrows()):
         earliest = max(cast(pd.Timestamp, row["release_time"]), decision_time)
-        eligible[job_index, :] = np.asarray(
+        eligible[job_position, :] = np.asarray(
             (slots >= earliest) & (slot_ends <= cast(pd.Timestamp, row["deadline"])),
             dtype=bool,
         )

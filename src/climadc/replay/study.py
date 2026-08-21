@@ -337,10 +337,7 @@ class ReplayStudyRunner:
                 workload=workload,
                 config=replay_config,
             )
-        payload: dict[str, Any] = {
-            "assumptions": assumptions_payload(config),
-            "manifest": manifest.model_dump(mode="json"),
-        }
+        payload: dict[str, Any] = assumptions_payload(config)
         config_sha256 = hashlib.sha256(_canonical_json(payload)).hexdigest()
         started_at = _exact_utc(self._clock(), "replay clock")
         return ReplayStudyResult(

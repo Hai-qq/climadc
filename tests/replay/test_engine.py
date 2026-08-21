@@ -197,7 +197,7 @@ def test_replay_runs_all_policies_and_settles_unit_aware_metrics() -> None:
         "facility_energy_kwh",
         "it_energy_kwh",
         "cooling_energy_kwh",
-        "emissions_kgco2e",
+        "estimated_location_based_emissions_kgco2e",
         "energy_cost",
         "peak_kw",
         "completed_jobs",

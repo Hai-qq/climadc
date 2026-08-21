@@ -31,7 +31,7 @@ _METRIC_COLUMNS = (
     "facility_energy_kwh",
     "it_energy_kwh",
     "cooling_energy_kwh",
-    "emissions_kgco2e",
+    "estimated_location_based_emissions_kgco2e",
     "energy_charge",
     "demand_charge",
     "energy_cost",
@@ -42,7 +42,7 @@ _METRIC_COLUMNS = (
     "energy_balance_error_kwh",
     "shifted_energy_kwh",
     "energy_cost_change_vs_asap",
-    "emissions_change_vs_asap_kgco2e",
+    "estimated_location_based_emissions_change_vs_asap_kgco2e",
     "peak_change_vs_asap_kw",
     "realized_objective",
     "objective_regret",
@@ -359,7 +359,7 @@ def _rolling_metrics(
                 "facility_energy_kwh": facility_energy,
                 "it_energy_kwh": it_energy,
                 "cooling_energy_kwh": cooling_energy,
-                "emissions_kgco2e": emissions,
+                "estimated_location_based_emissions_kgco2e": emissions,
                 "energy_charge": energy_charge,
                 "demand_charge": demand_charge,
                 "energy_cost": energy_cost,
@@ -370,8 +370,9 @@ def _rolling_metrics(
                 "deadline_violations": float(len(overdue)),
                 "unserved_energy_kwh": float(unserved),
                 "energy_balance_error_kwh": max(balance_errors, default=0.0),
-                "realized_objective": config.cost_weight * energy_cost
-                + config.carbon_weight * emissions,
+                "realized_objective": config.realized_objective_for_policy(
+                    policy, energy_cost, emissions
+                ),
             }
         )
 
@@ -406,8 +407,10 @@ def _rolling_metrics(
                 "shifted_energy_kwh": shifted,
                 "energy_cost_change_vs_asap": float(row["energy_cost"])
                 - float(asap["energy_cost"]),
-                "emissions_change_vs_asap_kgco2e": float(row["emissions_kgco2e"])
-                - float(asap["emissions_kgco2e"]),
+                "estimated_location_based_emissions_change_vs_asap_kgco2e": float(
+                    row["estimated_location_based_emissions_kgco2e"]
+                )
+                - float(asap["estimated_location_based_emissions_kgco2e"]),
                 "peak_change_vs_asap_kw": float(row["peak_kw"]) - float(asap["peak_kw"]),
                 "objective_regret": 0.0 if abs(regret) <= tolerance else regret,
             }
@@ -437,6 +440,8 @@ class RollingReplayEngine:
         workload: FlexibleWorkloadFrame,
         config: ReplayConfig,
     ) -> RollingReplayResult:
+        if config.objective_mode == "pareto_analysis":
+            raise ConfigurationError("pareto_analysis is currently limited to single-window replay")
         origin = _exact_utc(start_time, "start_time")
         count = _positive_periods(periods)
         commit_interval = _rolling_step(step, config)

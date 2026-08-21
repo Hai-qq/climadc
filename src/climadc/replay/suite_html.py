@@ -1,13 +1,44 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping
 from html import escape
+from numbers import Real
 from typing import Any, cast
 
 import pandas as pd
 
 from climadc.replay.suite import ReplaySuiteResult
+
+
+def _machine_value(value: object) -> object:
+    if isinstance(value, dict):
+        return {str(key): _machine_value(nested) for key, nested in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_machine_value(nested) for nested in value]
+    if isinstance(value, Real) and not isinstance(value, bool):
+        number = float(value)
+        return number if math.isfinite(number) else None
+    if hasattr(value, "item"):
+        return _machine_value(cast(Any, value).item())
+    return value
+
+
+def _machine_report_payload(result: ReplaySuiteResult) -> str:
+    payload = {
+        "schema_version": "1",
+        "suite_type": result.config.suite_type,
+        "records": result.suite_metrics.to_dict(orient="records"),
+        "pareto_policies": list(result.pareto_frontier),
+    }
+    text = json.dumps(
+        _machine_value(payload),
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    return escape(text, quote=False)
 
 
 def _number(value: object, digits: int = 2) -> str:
@@ -24,9 +55,9 @@ def _percent(value: object) -> str:
     return f"{100.0 * float(checked):.1f}%"
 
 
-def _robustness_rows(result: ReplaySuiteResult) -> str:
+def _aggregate_rows(result: ReplaySuiteResult) -> str:
     rows: list[str] = []
-    for _, metric in result.robustness_metrics.iterrows():
+    for _, metric in result.suite_metrics.iterrows():
         rows.append(
             "<tr>"
             f"<th>{escape(str(metric['policy']))}</th>"
@@ -36,8 +67,8 @@ def _robustness_rows(result: ReplaySuiteResult) -> str:
             f"<td>{_number(metric['worst_energy_cost_change_vs_asap'])}</td>"
             f"<td>{escape(str(metric['worst_energy_cost_scenario'])) if pd.notna(metric['worst_energy_cost_scenario']) else '—'}</td>"
             f"<td>{_percent(metric['emissions_improvement_fraction_of_feasible'])}</td>"
-            f"<td>{_number(metric['mean_emissions_change_vs_asap_kgco2e'])}</td>"
-            f"<td>{_number(metric['worst_emissions_change_vs_asap_kgco2e'])}</td>"
+            f"<td>{_number(metric['mean_estimated_location_based_emissions_change_vs_asap_kgco2e'])}</td>"
+            f"<td>{_number(metric['worst_estimated_location_based_emissions_change_vs_asap_kgco2e'])}</td>"
             f"<td>{escape(str(metric['worst_emissions_scenario'])) if pd.notna(metric['worst_emissions_scenario']) else '—'}</td>"
             f"<td>{_percent(metric['peak_improvement_fraction_of_feasible'])}</td>"
             f"<td>{_number(metric['mean_peak_change_vs_asap_kw'])}</td>"
@@ -113,19 +144,23 @@ def render_replay_suite_report(
     run_id: str,
     scenario_paths: Mapping[str, str],
 ) -> str:
-    """Render a self-contained cross-scenario robustness report."""
+    """Render a self-contained cross-scenario sensitivity or robustness report."""
 
     pareto = ", ".join(result.pareto_frontier) if result.pareto_frontier else "none"
     fully_feasible = int(
-        (result.robustness_metrics["feasible_scenarios"] == len(result.scenarios)).sum()
+        (result.suite_metrics["feasible_scenarios"] == len(result.scenarios)).sum()
     )
     currency = escape(result.currency)
+    suite_type = result.config.suite_type
+    heading = "SENSITIVITY ANALYSIS" if suite_type == "sensitivity" else "ROBUSTNESS ANALYSIS"
+    title = "sensitivity suite" if suite_type == "sensitivity" else "robustness suite"
+    policy_heading = "Policy sensitivity" if suite_type == "sensitivity" else "Policy robustness"
     return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ClimaDC replay robustness suite — {escape(result.config.suite_id)}</title>
+  <title>ClimaDC replay {title} — {escape(result.config.suite_id)}</title>
   <style>
     :root {{ color-scheme:light; --ink:#17212b; --muted:#5e6872; --line:#d9e0e5;
       --paper:#fff; --wash:#f4f7f8; --accent:#0b6b66; --warn:#925006; }}
@@ -141,7 +176,7 @@ def render_replay_suite_report(
     .card {{ border:1px solid var(--line); border-radius:9px; padding:14px; }}
     .card b {{ display:block; font-size:21px; }} .table-wrap {{ overflow-x:auto; }}
     table {{ border-collapse:collapse; width:100%; min-width:900px; }}
-    table.robustness {{ min-width:1600px; }} th,td {{ border-bottom:1px solid var(--line);
+    table.aggregate {{ min-width:1600px; }} th,td {{ border-bottom:1px solid var(--line);
       padding:10px 8px; text-align:right; vertical-align:top; white-space:nowrap; }}
     th:first-child,td:first-child {{ text-align:left; }} thead th {{ color:var(--muted);
       font-size:12px; }} table.declared {{ min-width:0; table-layout:fixed; }}
@@ -153,8 +188,9 @@ def render_replay_suite_report(
   </style>
 </head>
 <body><main>
+  <template id="climadc-report-data">{_machine_report_payload(result)}</template>
   <header>
-    <span class="badge">EQUAL-WEIGHT ROBUSTNESS STUDY</span>
+    <span class="badge">EQUAL-WEIGHT {heading}</span>
     <h1>ClimaDC replay suite</h1>
     <p><strong>{escape(result.config.suite_id)}</strong> · run <code>{escape(run_id)}</code></p>
     <p class="muted">Cross-scenario comparison of verified replay studies. Negative cost,
@@ -173,15 +209,15 @@ def render_replay_suite_report(
       Pareto comparison only when it is feasible in every declared scenario.</p>
   </section>
   <section>
-    <h2>Policy robustness</h2>
+    <h2>{policy_heading}</h2>
     <p class="muted">Worst case is the maximum signed delta among feasible scenarios. Improvement
       rate is the share of feasible scenarios whose delta is below -1e-9 in the published unit.</p>
-    <div class="table-wrap"><table class="robustness">
+    <div class="table-wrap"><table class="aggregate">
       <thead><tr><th>Policy</th><th>Feasible</th>
       <th>Cost improve</th><th>Mean Δ cost ({currency})</th><th>Worst Δ cost</th><th>Worst scenario</th>
       <th>CO₂ improve</th><th>Mean Δ kgCO₂e</th><th>Worst Δ kgCO₂e</th><th>Worst scenario</th>
       <th>Peak improve</th><th>Mean Δ peak kW</th><th>Worst Δ peak kW</th><th>Worst scenario</th>
-      <th>Pareto</th></tr></thead><tbody>{_robustness_rows(result)}</tbody>
+      <th>Pareto</th></tr></thead><tbody>{_aggregate_rows(result)}</tbody>
     </table></div>
   </section>
   <section>

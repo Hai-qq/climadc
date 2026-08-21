@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal, cast
+import warnings
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pandas as pd
@@ -77,6 +78,57 @@ class ReplayInputsConfig(BaseModel):
         )
 
 
+class MonetizedObjectiveConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal["1"] = "1"
+    mode: Literal["monetized"] = "monetized"
+    carbon_price_currency_per_tco2e: float = Field(ge=0.0)
+    demand_charge_per_kw: float = Field(default=0.0, ge=0.0)
+
+
+class EpsilonConstraintObjectiveConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal["1"] = "1"
+    mode: Literal["epsilon_constraint"] = "epsilon_constraint"
+    emissions_upper_bound_kgco2e: float | None = Field(default=None, gt=0.0)
+    peak_upper_bound_kw: float | None = Field(default=None, gt=0.0)
+    demand_charge_per_kw: float = Field(default=0.0, ge=0.0)
+
+    @model_validator(mode="after")
+    def at_least_one_constraint(self) -> EpsilonConstraintObjectiveConfig:
+        if self.emissions_upper_bound_kgco2e is None and self.peak_upper_bound_kw is None:
+            raise ValueError("epsilon_constraint requires an emissions and/or peak upper bound")
+        return self
+
+
+class ParetoAnalysisObjectiveConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal["1"] = "1"
+    mode: Literal["pareto_analysis"] = "pareto_analysis"
+    carbon_prices_currency_per_tco2e: list[float] = Field(min_length=2)
+    demand_charge_per_kw: float = Field(default=0.0, ge=0.0)
+
+    @field_validator("carbon_prices_currency_per_tco2e")
+    @classmethod
+    def prices_are_public_fixed_points(cls, values: list[float]) -> list[float]:
+        if any(not 0.0 <= value < float("inf") for value in values):
+            raise ValueError("pareto carbon prices must be finite and nonnegative")
+        if len(values) != len(set(values)):
+            raise ValueError("pareto carbon prices must be unique")
+        if values != sorted(values):
+            raise ValueError("pareto carbon prices must use stable ascending order")
+        return values
+
+
+ObjectiveConfig = Annotated[
+    MonetizedObjectiveConfig | EpsilonConstraintObjectiveConfig | ParetoAnalysisObjectiveConfig,
+    Field(discriminator="mode"),
+]
+
+
 class ReplaySettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -85,9 +137,10 @@ class ReplaySettings(BaseModel):
     interval: NonEmptyText
     it_capacity_kw: float = Field(gt=0.0)
     fixed_it_power_kw: float = Field(default=0.0, ge=0.0)
-    cost_weight: float = Field(default=1.0, ge=0.0)
-    carbon_weight: float = Field(default=1.0, ge=0.0)
-    demand_charge_per_kw: float = Field(default=0.0, ge=0.0)
+    objective: ObjectiveConfig | None = None
+    cost_weight: float | None = Field(default=None, ge=0.0)
+    carbon_weight: float | None = Field(default=None, ge=0.0)
+    demand_charge_per_kw: float | None = Field(default=None, ge=0.0)
     risk_quantile: float | None = Field(default=None, gt=0.5, lt=1.0)
     tolerance_kwh: float = Field(default=1e-7, gt=0.0)
     temperature_variable: NonEmptyText = "air_temperature"
@@ -106,25 +159,100 @@ class ReplaySettings(BaseModel):
             raise ValueError("horizon must be an integer multiple of interval")
         if self.fixed_it_power_kw > self.it_capacity_kw:
             raise ValueError("fixed_it_power_kw must not exceed it_capacity_kw")
-        if self.cost_weight == 0.0 and self.carbon_weight == 0.0:
+        legacy_fields = (self.cost_weight, self.carbon_weight, self.demand_charge_per_kw)
+        if self.objective is not None and any(value is not None for value in legacy_fields):
+            raise ValueError(
+                "objective must not be combined with legacy cost_weight, carbon_weight, or "
+                "demand_charge_per_kw"
+            )
+        if (
+            isinstance(self.objective, ParetoAnalysisObjectiveConfig)
+            and self.risk_quantile is not None
+        ):
+            raise ValueError("pareto_analysis cannot be combined with risk_quantile")
+        cost_weight = 1.0 if self.cost_weight is None else self.cost_weight
+        carbon_weight = 1.0 if self.carbon_weight is None else self.carbon_weight
+        if self.objective is None and cost_weight == 0.0 and carbon_weight == 0.0:
             raise ValueError("joint objective requires a nonzero cost or carbon weight")
         return self
 
     def to_replay_config(self) -> ReplayConfig:
+        objective_mode: Literal[
+            "legacy_unscaled", "monetized", "epsilon_constraint", "pareto_analysis"
+        ]
+        if self.objective is None:
+            warnings.warn(
+                (
+                    "cost_weight/carbon_weight is deprecated and dimensionally unscaled; "
+                    "migrate to replay.objective"
+                ),
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            objective_mode = "legacy_unscaled"
+            carbon_price = 0.0
+            emissions_bound = None
+            peak_bound = None
+            pareto_prices: tuple[float, ...] = ()
+            demand_charge = 0.0 if self.demand_charge_per_kw is None else self.demand_charge_per_kw
+        else:
+            objective_mode = self.objective.mode
+            demand_charge = self.objective.demand_charge_per_kw
+            carbon_price = (
+                self.objective.carbon_price_currency_per_tco2e
+                if isinstance(self.objective, MonetizedObjectiveConfig)
+                else 0.0
+            )
+            emissions_bound = (
+                self.objective.emissions_upper_bound_kgco2e
+                if isinstance(self.objective, EpsilonConstraintObjectiveConfig)
+                else None
+            )
+            peak_bound = (
+                self.objective.peak_upper_bound_kw
+                if isinstance(self.objective, EpsilonConstraintObjectiveConfig)
+                else None
+            )
+            pareto_prices = (
+                tuple(self.objective.carbon_prices_currency_per_tco2e)
+                if isinstance(self.objective, ParetoAnalysisObjectiveConfig)
+                else ()
+            )
         return ReplayConfig(
             site_id=self.site_id,
             horizon=pd.Timedelta(self.horizon),
             interval=pd.Timedelta(self.interval),
             it_capacity_kw=self.it_capacity_kw,
             fixed_it_power_kw=self.fixed_it_power_kw,
-            cost_weight=self.cost_weight,
-            carbon_weight=self.carbon_weight,
-            demand_charge_per_kw=self.demand_charge_per_kw,
+            cost_weight=1.0 if self.cost_weight is None else self.cost_weight,
+            carbon_weight=1.0 if self.carbon_weight is None else self.carbon_weight,
+            demand_charge_per_kw=demand_charge,
+            objective_mode=objective_mode,
+            carbon_price_currency_per_tco2e=carbon_price,
+            emissions_upper_bound_kgco2e=emissions_bound,
+            peak_upper_bound_kw=peak_bound,
+            pareto_carbon_prices_currency_per_tco2e=pareto_prices,
             risk_quantile=self.risk_quantile,
             tolerance_kwh=self.tolerance_kwh,
             temperature_variable=self.temperature_variable,
             weather_metric=self.weather_metric,
         )
+
+    def objective_payload(self) -> dict[str, object]:
+        """Return the versioned objective contract written into evidence artifacts."""
+        if self.objective is not None:
+            return cast(dict[str, object], self.objective.model_dump(mode="json"))
+        return {
+            "version": "legacy-1",
+            "mode": "legacy_unscaled",
+            "cost_weight": 1.0 if self.cost_weight is None else self.cost_weight,
+            "carbon_weight": 1.0 if self.carbon_weight is None else self.carbon_weight,
+            "demand_charge_per_kw": (
+                0.0 if self.demand_charge_per_kw is None else self.demand_charge_per_kw
+            ),
+            "dimensionally_unscaled": True,
+            "deprecated": True,
+        }
 
 
 class TemperatureSensitivePUEConfig(BaseModel):
@@ -197,6 +325,11 @@ class ReplayStudyConfig(BaseModel):
     def rolling_settings_match_replay_grid(self) -> ReplayStudyConfig:
         if self.rolling is None:
             return self
+        if isinstance(self.replay.objective, ParetoAnalysisObjectiveConfig):
+            raise ValueError(
+                "pareto_analysis is currently limited to single-window replay; "
+                "use one explicit monetized objective for rolling replay"
+            )
         step = self.rolling.step_timedelta
         interval = pd.Timedelta(self.replay.interval)
         horizon = pd.Timedelta(self.replay.horizon)
