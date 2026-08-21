@@ -23,6 +23,7 @@ GOLDEN = ROOT / "benchmarks" / "reference" / "gb_london_24h" / "summary.json"
         "benchmarks/weatherdc.yaml",
         "benchmarks/reference/gb_london_24h/summary.json",
         "benchmarks/reference/gb_london_24h/summary.csv",
+        "examples/weatherdc_kasetsart/run.py",
     ],
 )
 def test_byte_bound_repository_evidence_uses_lf(relative_path: str) -> None:

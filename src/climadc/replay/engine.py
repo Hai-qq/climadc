@@ -305,6 +305,31 @@ def _joint_slot_cost(
     )
 
 
+def _asap_coefficients(prepared: PreparedReplayInputs) -> np.ndarray:
+    job_count = len(prepared.jobs)
+    slot_count = len(prepared.slots)
+    coefficients = np.zeros(job_count * slot_count + 1, dtype=float)
+    order_keys = [
+        (
+            -float(row["priority"]),
+            cast(pd.Timestamp, row["deadline"]),
+            cast(pd.Timestamp, row["release_time"]),
+            str(row["job_id"]),
+        )
+        for _, row in prepared.jobs.iterrows()
+    ]
+    ordered_jobs = sorted(range(job_count), key=order_keys.__getitem__)
+    delay_weights = np.zeros(job_count, dtype=float)
+    for rank, job_index in enumerate(ordered_jobs):
+        delay_weights[job_index] = float(job_count - rank)
+    for job_index in range(job_count):
+        for slot_index in range(slot_count):
+            coefficients[job_index * slot_count + slot_index] = (
+                (slot_index + 1) * delay_weights[job_index] * prepared.interval_hours
+            )
+    return coefficients
+
+
 def _objective(
     policy: str,
     prepared: PreparedReplayInputs,
@@ -325,24 +350,7 @@ def _objective(
     else:
         constraint_pue = forecast_pue
     if policy == "asap":
-        order_keys = [
-            (
-                -float(row["priority"]),
-                cast(pd.Timestamp, row["deadline"]),
-                cast(pd.Timestamp, row["release_time"]),
-                str(row["job_id"]),
-            )
-            for _, row in prepared.jobs.iterrows()
-        ]
-        ordered_jobs = sorted(range(job_count), key=order_keys.__getitem__)
-        delay_weights = np.zeros(job_count, dtype=float)
-        for rank, job_index in enumerate(ordered_jobs):
-            delay_weights[job_index] = float(job_count - rank)
-        for job_index in range(job_count):
-            for slot_index in range(slot_count):
-                coefficients[job_index * slot_count + slot_index] = (
-                    (slot_index + 1) * delay_weights[job_index] * prepared.interval_hours
-                )
+        coefficients = _asap_coefficients(prepared)
     elif policy == "peak":
         coefficients[-1] = 1.0
     else:
@@ -433,6 +441,34 @@ def _solve_policy(
         return _Solution(policy, False, int(result.status), str(result.message), None)
     job_count = len(prepared.jobs)
     slot_count = len(prepared.slots)
+    primary_allocation = np.asarray(result.x[: job_count * slot_count], dtype=float).reshape(
+        job_count, slot_count
+    )
+    slot_rows = np.zeros((slot_count, job_count * slot_count + 1), dtype=float)
+    for slot_index in range(slot_count):
+        slot_rows[
+            slot_index,
+            [job_index * slot_count + slot_index for job_index in range(job_count)],
+        ] = 1.0
+    canonical_result = linprog(
+        _asap_coefficients(prepared),
+        A_ub=a_ub,
+        b_ub=b_ub,
+        A_eq=np.vstack([a_eq, slot_rows]),
+        b_eq=np.concatenate([b_eq, np.sum(primary_allocation, axis=0)]),
+        bounds=bounds,
+        method="highs",
+        options={"primal_feasibility_tolerance": _HIGHS_FEASIBILITY_TOLERANCE},
+    )
+    if not canonical_result.success or canonical_result.x is None:
+        return _Solution(
+            policy,
+            False,
+            int(canonical_result.status),
+            f"deterministic allocation tie-break failed: {canonical_result.message}",
+            None,
+        )
+    result = canonical_result
     allocation = np.asarray(result.x[: job_count * slot_count], dtype=float).reshape(
         job_count, slot_count
     )

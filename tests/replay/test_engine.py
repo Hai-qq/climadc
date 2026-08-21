@@ -345,6 +345,12 @@ def test_asap_runs_higher_priority_job_first_when_capacity_is_contended() -> Non
     assert list(asap["job_id"]) == ["high-priority", "low-priority"]
     assert list(asap["valid_time"]) == [SLOTS[0], SLOTS[1]]
 
+    peak = result.allocations.loc[
+        (result.allocations["policy"] == "peak") & (result.allocations["power_kw"] > 1e-8)
+    ].sort_values("valid_time")
+    assert list(peak["job_id"]) == ["high-priority", "low-priority"]
+    assert list(peak["valid_time"]) == [SLOTS[0], SLOTS[1]]
+
 
 def test_replay_ignores_forecasts_that_arrive_after_decision_time() -> None:
     frame = _grid().to_pandas()

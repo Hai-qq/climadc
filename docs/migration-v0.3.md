@@ -33,6 +33,14 @@ Use `epsilon_constraint` to minimize cost under explicit emissions/peak bounds, 
 `pareto_analysis` with a sorted, unique fixed list of carbon prices. Pareto analysis is currently
 single-window only; rolling configs fail explicitly rather than silently changing semantics.
 
+## Account for deterministic job-allocation tie-breaking
+
+The v0.3 solver keeps every policy's primary result and aggregate slot power unchanged, then uses a
+fixed ASAP ordering to choose among equivalent job-level allocations. A replay produced by an older
+build can therefore have a different schedule row assignment or `shifted_energy_kwh` even when its
+energy, cost, emissions, and peak metrics are identical. Regenerate compact reference artifacts when
+byte-for-byte comparison is required.
+
 ## Rename fields and suites
 
 - `emissions_kgco2e` becomes `estimated_location_based_emissions_kgco2e` in v2 replay outputs.

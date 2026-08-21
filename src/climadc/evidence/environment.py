@@ -65,7 +65,7 @@ def capture_environment() -> EnvironmentRecord:
         random_seeds={
             "python_random": None,
             "numpy_legacy_global": None,
-            "scipy_highs": "deterministic; no seed option configured",
+            "scipy_highs": "fixed-aggregate allocation tie-break; no seed option configured",
         },
         dependency_constraints_sha256=constraints_hash,
         dependency_constraints_source=constraints_source,

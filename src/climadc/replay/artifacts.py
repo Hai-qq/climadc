@@ -446,8 +446,16 @@ class ReplayArtifactWriter:
                 input_hashes=canonical_hashes,
                 solver=SolverRecord(
                     name="SciPy HiGHS",
-                    method="scipy.optimize.linprog(method=highs)",
-                    options={"primal_feasibility_tolerance": 1e-10},
+                    method=(
+                        "scipy.optimize.linprog(method=highs), then fixed-aggregate "
+                        "job-allocation tie-break"
+                    ),
+                    options={
+                        "primal_feasibility_tolerance": 1e-10,
+                        "allocation_tie_break": (
+                            "ASAP priority/deadline/release/job_id at fixed aggregate slot power"
+                        ),
+                    },
                 ),
             )
             self._validate(temporary, result, run_id)

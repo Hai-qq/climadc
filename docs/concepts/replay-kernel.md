@@ -28,6 +28,12 @@ capacity. Jobs whose `available_at` is later than the decision time are excluded
 Priority orders contended ASAP work; it is not a license to drop lower-priority jobs. Every accepted
 job remains a hard completion constraint for every policy.
 
+Each policy first solves its declared objective. A second linear program then keeps aggregate power
+in every slot fixed and assigns that power to jobs using the ASAP priority, deadline, release-time,
+and job-ID order. This tie-break cannot improve or degrade the policy objective or change aggregate
+power; it makes job-level schedules and `shifted_energy_kwh` reproducible when HiGHS has multiple
+equivalent allocations.
+
 The reference `TemperatureSensitivePUEModel` uses a bounded linear curve:
 
 ```text
