@@ -4,4 +4,5 @@ src/climadc/reference/fixtures/gb_london_24h/*.yaml text eol=lf
 benchmarks/weatherdc.yaml text eol=lf
 benchmarks/reference/gb_london_24h/*.csv text eol=lf
 benchmarks/reference/gb_london_24h/*.json text eol=lf
+benchmarks/reference/weatherdc_small/*.json text eol=lf
 examples/weatherdc_kasetsart/run.py text eol=lf

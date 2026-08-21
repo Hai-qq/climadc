@@ -1,0 +1,33 @@
+{
+  "climadc_version": "0.3.0a1",
+  "comparison_tolerance": {
+    "absolute": 1e-12,
+    "rationale": "The WeatherDC OLS path is compared after serialization; 1e-12 absorbs cross-platform LAPACK rounding while remaining below half the least precise decimal place published by the E0 claim.",
+    "relative": 0.0
+  },
+  "config_sha256": "d11238394b28ead2fcca0fcad3fae61f98a21993f55a0dffcdf49e8f6b40a41c",
+  "evidence_level": "E0",
+  "input_hashes": {
+    "climate": "bf134a50214574105fe34ad9107961b005a011eb2f1824c9ac3a42433fb680e0",
+    "telemetry": "03ba2213f1ad89c2e3410fdac43c33426fe59b0979ae316e3b35f3aba42a6e24",
+    "weatherdc_reference_implementation": "ff0f3fdb6e812c0898d52a5691cee28289d06e46271d0d2c1ab6eb0129a7da17",
+    "workload": "f9edc0d3158c1c67b3464051a4796d187807c47cad1368a560f7c653b52da629"
+  },
+  "interpretation": "project-generated synthetic pipeline sanity check",
+  "metrics": {
+    "persistence": {
+      "mae": 4.210890000000008,
+      "r2": -2.11689675778391,
+      "rmse": 4.734545191984292,
+      "wape": 0.06228282623272091
+    },
+    "weatherdc": {
+      "mae": 3.21216464982399e-07,
+      "r2": 0.9999999999999768,
+      "rmse": 4.089254200594719e-07,
+      "wape": 4.751078577589915e-09
+    }
+  },
+  "schema_version": "1",
+  "study_id": "weatherdc-kasetsart-small-reference"
+}

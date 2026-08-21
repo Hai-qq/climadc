@@ -36,6 +36,9 @@ The project follows [Semantic Versioning](https://semver.org/). Alpha APIs may c
   reproducible across platforms without changing energy, cost, emissions, or peak results.
 - Repository configurations, compact golden outputs, and source files referenced by byte-level
   claim hashes now use enforced LF checkout semantics on Windows, macOS, and Linux.
+- The WeatherDC E0 claim now byte-binds a checked-in compact summary and verifies fresh OLS results
+  under a declared `1e-12` absolute tolerance, instead of requiring architecture-specific raw JSON
+  bytes to be identical.
 - The Typer floor is raised to the vendored-Click generation, avoiding unsupported combinations
   between historical Typer releases and current Click while retaining Python 3.10 support.
 - National-average carbon settlement is named estimated location-based emissions throughout the

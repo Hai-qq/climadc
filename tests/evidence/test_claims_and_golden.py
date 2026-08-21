@@ -15,6 +15,7 @@ from examples.weatherdc_kasetsart.run import run_small
 
 ROOT = Path(__file__).resolve().parents[2]
 GOLDEN = ROOT / "benchmarks" / "reference" / "gb_london_24h" / "summary.json"
+WEATHER_GOLDEN = ROOT / "benchmarks" / "reference" / "weatherdc_small" / "summary.json"
 
 
 @pytest.mark.parametrize(
@@ -23,6 +24,7 @@ GOLDEN = ROOT / "benchmarks" / "reference" / "gb_london_24h" / "summary.json"
         "benchmarks/weatherdc.yaml",
         "benchmarks/reference/gb_london_24h/summary.json",
         "benchmarks/reference/gb_london_24h/summary.csv",
+        "benchmarks/reference/weatherdc_small/summary.json",
         "examples/weatherdc_kasetsart/run.py",
     ],
 )
@@ -52,19 +54,40 @@ def test_claim_registry_is_strict_and_london_claim_matches_golden() -> None:
     assert "operational savings" in " ".join(claim.limitations).lower()
 
 
-def test_weatherdc_claim_binds_the_generated_metrics_file(tmp_path: Path) -> None:
+def test_weatherdc_claim_binds_compact_reference_and_matches_fresh_run(tmp_path: Path) -> None:
     registry = ClaimRegistry.from_yaml(ROOT / "evidence" / "claims.yaml")
     claim = next(item for item in registry.claims if item.claim_id == "E0-WEATHERDC-SANITY-001")
-    result, run_dir = run_small(tmp_path / "weatherdc")
+    golden = json.loads(WEATHER_GOLDEN.read_text(encoding="utf-8"))
+    result, _ = run_small(tmp_path / "weatherdc")
+    namespace = runpy.run_path(
+        str(ROOT / "benchmarks" / "reference" / "weatherdc_small" / "reproduce.py")
+    )
 
     assert (
         claim.config_sha256
         == hashlib.sha256((ROOT / "benchmarks/weatherdc.yaml").read_bytes()).hexdigest()
     )
     assert claim.input_hashes == result.input_hashes
-    assert (
-        claim.output_sha256 == hashlib.sha256((run_dir / "metrics.json").read_bytes()).hexdigest()
+    assert claim.scenario_or_study_id == golden["study_id"]
+    assert claim.config_sha256 == golden["config_sha256"]
+    assert claim.input_hashes == golden["input_hashes"]
+    assert claim.output_sha256 == hashlib.sha256(WEATHER_GOLDEN.read_bytes()).hexdigest()
+    assert namespace["_equivalent"](golden["metrics"], result.metrics["cooling_power"])
+
+
+def test_weatherdc_golden_summary_is_generated_and_current() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "benchmarks" / "reference" / "weatherdc_small" / "reproduce.py"),
+            "--check",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
     )
+    assert result.returncode == 0, result.stderr
 
 
 def test_golden_summary_is_generated_and_current() -> None:

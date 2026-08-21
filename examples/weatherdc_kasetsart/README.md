@@ -28,6 +28,11 @@ features that were already available at the common decision origin. It is compar
 last-observation persistence forecast on the same test timestamps. Both models' point predictions
 are written to `predictions.parquet`; `metrics.json` is computed from those exact values.
 
+The public E0 claim binds the checked-in compact reference rather than requiring raw OLS bytes to
+match across LAPACK implementations. Verify it with
+`python benchmarks/reference/weatherdc_small/reproduce.py --check`; the declared comparison
+tolerance is narrower than the least precise decimal place published by the claim.
+
 The synthetic forecast batch has an explicit issue/availability time before the study window. This
 is why the small reference can require zero rejected climate rows. This availability convention is
 specific to the synthetic fixture and is not backfilled onto HII observations.
