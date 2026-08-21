@@ -1,115 +1,61 @@
-# Replay robustness suites
+# Replay sensitivity and robustness suites
 
-A replay suite turns several independently reproducible replay studies into one cross-scenario
-policy comparison. It reuses the existing solver and 12-artifact study contract; it does not mutate
-inputs, invent uncertainty distributions, or pool records before scheduling.
+A replay suite runs complete, independently verifiable studies and aggregates signed deltas from
+each scenario's own ASAP baseline. `suite_type` fixes what the matrix is allowed to claim:
 
-## Configure a suite
+- `sensitivity` changes assumptions within a shared sample, such as an objective carbon price or
+  synthetic demand charge;
+- `robustness` requires a declared and actually varying `decision_date`, `season`, `location`, or
+  `workload` dimension. Different values alone do not prove statistical independence; provenance
+  and coverage still bound the claim.
 
-Each scenario points to a complete replay `study.yaml` with its own source manifest, assumptions,
-and input hashes:
+The packaged suite reuses one London day and workload, so it is sensitivity analysis:
 
 ```yaml
 schema_version: "1"
-suite_id: facility-policy-sensitivity
+suite_id: gb-london-policy-sensitivity
+suite_type: sensitivity
 aggregation: equal_weight
 scenarios:
-  - scenario_id: base
-    description: Declared base tariff and objective weights
-    study: scenarios/base/study.yaml
-  - scenario_id: high-demand-charge
-    description: Same horizon with a declared peak-charge stress
-    study: scenarios/high-demand-charge/study.yaml
-assumptions:
-  purpose: Test policy sensitivity to declared operating assumptions
-limitations:
-  - Scenario weights are not probabilities.
-output_dir: replay-suite-runs
+  - scenario_id: balanced
+    description: Illustrative 1000 GBP/tCO2e carbon price
+    study: study.yaml
+  - scenario_id: cost-dominant
+    description: Illustrative 100 GBP/tCO2e carbon price
+    study: study-cost-dominant.yaml
 ```
 
-A suite requires at least two distinct study files and filesystem-safe, unique scenario IDs. Before
-solving, ClimaDC requires every scenario to share the replay horizon, interval, single-window versus
-rolling mode, rolling shape, and availability of the optional risk-aware policy. After solving, it
-also requires one currency and the same ordered policy set. Decision dates, sites, inputs, objective
-weights, facility models, and declared tariffs may vary; the author remains responsible for making
-their signed deltas scientifically comparable.
-
-Run a custom suite and resolve its report with:
+Run and verify it offline:
 
 ```bash
-climadc replay-suite ./suite.yaml --output-dir ./replay-suite-runs
-climadc report ./replay-suite-runs/latest
-```
-
-The public Python path uses the same implementation:
-
-```python
-from pathlib import Path
-
-from climadc.replay import (
-    ReplaySuiteArtifactWriter,
-    ReplaySuiteConfig,
-    ReplaySuiteRunner,
-)
-
-config = ReplaySuiteConfig.from_yaml(Path("suite.yaml"))
-result = ReplaySuiteRunner().run(config)
-run_path = ReplaySuiteArtifactWriter().write(result, config.output_dir)
-print(run_path)
-```
-
-The installed package includes a fully offline four-scenario sensitivity example:
-
-```bash
-climadc demo robustness-suite --output-dir ./climadc-replay-suite-runs
+climadc demo sensitivity-suite --output-dir ./climadc-replay-suite-runs
+climadc verify-suite ./climadc-replay-suite-runs/latest
 climadc report ./climadc-replay-suite-runs/latest
 ```
 
-The example reuses one verified Great Britain snapshot and varies joint-objective weights and a
-synthetic demand charge. It demonstrates the suite mechanics; it is sensitivity analysis, not an
-out-of-sample study.
+The old `demo robustness-suite` spelling calls the same packaged sensitivity suite and emits a
+deprecation warning. It is not an out-of-sample validation alias.
 
-## Aggregation semantics
+## Comparability and aggregation
 
-Every cost, emissions, and peak value is first expressed as a signed change from ASAP inside its
-own scenario. Negative means a reduction; positive means an increase. For each policy the suite
-reports:
+Scenarios must share horizon, interval, single-window/rolling shape, risk-policy availability,
+metric schema, policy order, and currency. Objective values may vary in a sensitivity matrix.
+Each policy row records feasibility and signed cost, estimated location-based emissions, and peak
+deltas from that scenario's ASAP schedule. Equal weights are arithmetic weights, not probabilities.
+The published “worst” value is only the maximum among the finite declared scenarios, not tail risk.
 
-- scenario count, feasible count, and feasible fraction;
-- the fraction of feasible scenarios whose signed change is below `-1e-9` in that metric's unit;
-- the unweighted arithmetic mean change over feasible scenarios;
-- the worst feasible change, defined as the maximum signed change, plus its scenario ID;
-- Pareto membership over mean cost, emissions, and peak changes.
+The aggregate Pareto set minimizes the three equal-weight mean deltas among policies feasible in
+every scenario. It must not be confused with `objective.mode: pareto_analysis`, which publishes a
+complete fixed carbon-price sweep inside one study.
 
-An infeasible policy remains visible but contributes no numeric delta to the mean or improvement
-rate. It is never Pareto-eligible. The Pareto comparison includes only policies feasible in every
-declared scenario and minimizes all three equal-weight arithmetic means, using a relative numerical
-dominance tolerance of `1e-9`. It is not a scalar ranking,
-global optimum, probability-weighted risk measure, CVaR calculation, or production guarantee.
+## Artifact contract
 
-## Published evidence
+The v2 suite root contains `suite.yaml`, lineage and environment manifests, recursive checksums,
+`scenario-index.json`, `scenario-metrics.parquet`, `suite-metrics.json`, `pareto-frontier.json`, an
+offline report, and `scenarios/`. Every scenario directory is a complete v2 run and is recursively
+checked by `verify-suite`. File membership comes from `run-manifest.json`; the list above describes
+the current schema rather than promising a permanent count.
 
-Each immutable suite run contains exactly eight top-level entries:
-
-| Artifact | Purpose |
-|---|---|
-| `suite.yaml` | path-independent aggregation, compatibility, scenario hashes, assumptions, and limitations |
-| `lineage.json` | suite run ID, software version, timestamp, and scenario configuration hashes |
-| `scenario-index.json` | scenario metadata, feasibility, input hashes, and relative sub-run paths |
-| `scenario-metrics.parquet` | one status/settlement row per scenario and policy |
-| `robustness-metrics.json` | equal-weight feasibility, improvement, mean, and worst-case summaries |
-| `pareto-frontier.json` | eligibility rule, objectives, units, and non-dominated policies |
-| `report.html` | self-contained human-readable comparison with links to local scenario reports |
-| `scenarios/` | one complete, independently validated 12-artifact replay run per scenario |
-
-Publication is atomic. The suite-level `latest` pointer changes only after all summary files and all
-scenario sub-runs pass validation. Every scenario also has its own relative `latest` pointer inside
-the immutable suite directory.
-
-## Claim boundary
-
-Equal weights are an explicit analysis convention, not estimated occurrence probabilities. Means
-over differently scaled workloads or sites can be dominated by larger scenarios even though each
-value is baseline-relative. “Worst” means worst among the finite declared scenarios, not a tail-risk
-bound. A useful robustness claim therefore requires scenario design, provenance, and coverage that
-go beyond merely adding more YAML files.
+The HTML for a sensitivity suite deliberately avoids a robustness-validation claim. A robust
+matrix still needs evidence-level limits: different dates with a synthetic workload remain E1, not
+E2 or E3.

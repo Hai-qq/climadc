@@ -1,6 +1,6 @@
 # Engineering replay kernel
 
-The v0.2 Alpha replay kernel turns the canonical engineering inputs into a constrained,
+The v0.3 Alpha replay kernel turns the canonical engineering inputs into a constrained,
 counterfactual comparison. It can solve one single-site decision window or repeatedly re-solve a
 rolling horizon, then settles every committed schedule against realized weather, energy price, and
 carbon intensity. It never sends a schedule to production infrastructure.
@@ -15,10 +15,10 @@ Setting `risk_quantile` adds a seventh:
 | `asap` | execute accepted work in the earliest eligible intervals, with higher priority first under contention; this is the baseline |
 | `peak` | minimize forecast facility peak |
 | `price` | minimize forecast energy charge plus the configured demand charge |
-| `carbon` | minimize forecast operational emissions |
-| `joint` | minimize the configured weighted cost-and-carbon objective |
-| `risk_aware` | minimize the same joint objective using the declared upper-quantile temperature, price, and carbon scenario |
-| `oracle` | minimize the same joint objective using realized inputs; hindsight comparator only |
+| `carbon` | minimize forecast location-based operational emissions |
+| `joint` | minimize the configured versioned objective |
+| `risk_aware` | minimize that objective using the declared upper-quantile temperature, price, and carbon scenario |
+| `oracle` | minimize that objective using settlement inputs; hindsight comparator only |
 
 All jobs known by the exact UTC decision time are hard constraints: each accepted job must conserve
 its required IT energy while respecting release time, deadline, maximum power, and shared IT
@@ -58,8 +58,8 @@ config = ReplayConfig(
     interval=pd.Timedelta(hours=1),
     it_capacity_kw=500.0,
     fixed_it_power_kw=300.0,
-    cost_weight=1.0,
-    carbon_weight=1.0,
+    objective_mode="monetized",
+    carbon_price_currency_per_tco2e=1000.0,
     demand_charge_per_kw=0.0,
 )
 
@@ -79,6 +79,18 @@ print(result.metrics)
 The decision time must already be an exact UTC `pandas.Timestamp`. The horizon must be an integer
 multiple of the interval. Input timestamps are interval starts; a job can use a slot only when its
 start is not earlier than the job release and its end is not later than the deadline.
+
+## Versioned objective semantics
+
+Study YAML uses an `objective` object. `monetized` minimizes energy and demand cost plus
+`carbon_price_currency_per_tco2e * emissions_kgco2e / 1000`. `epsilon_constraint` minimizes cost
+subject to declared decision-basis emissions and/or facility-peak bounds. `pareto_analysis` solves
+every sorted, unique, fixed carbon-price point, writes every point, and marks nondominated rows
+without selecting one. Pareto analysis is currently single-window only.
+
+Legacy `cost_weight` / `carbon_weight` fields preserve their old arithmetic and emit a
+`DeprecationWarning`. Their score is dimensionally unscaled and must not be described as money or a
+unified utility improvement. See the [v0.3 migration guide](../migration-v0.3.md).
 
 The study runner exposes the same engine through `climadc replay`. Add these optional fields to a
 study YAML to enable both Phase 4 features:
@@ -163,26 +175,25 @@ upper-quantile diagnostics above. The same payload is nested under `forecast` in
 The rolling result also exposes `decisions`, including policy-level solver status and committed
 energy at each origin, plus `remaining_energy` for the final per-policy job state. Its schedules and
 profiles contain `decision_time`, so every committed row can be traced to the forecast view that
-created it. The existing 12-artifact publication contract records rolling mode, decision count,
+created it. The versioned artifact publication contract records rolling mode, decision count,
 commit interval, and decision-level solver records.
 
 Settlement uses realized facility energy:
 
 ```text
 facility_energy_kwh = sum_t(actual_pue[t] * total_it_power_kw[t] * interval_hours)
-emissions_kgco2e = sum_t(facility_energy_kwh[t] * actual_carbon_kgco2e_per_kwh[t])
+estimated_location_based_emissions_kgco2e = sum_t(facility_energy_kwh[t] * estimated_settlement_carbon_kgco2e_per_kwh[t])
 energy_charge = sum_t(facility_energy_kwh[t] * actual_energy_price[t])
 demand_charge = actual_peak_kw * demand_charge_per_kw
 ```
 
-`objective_regret` is the policy's realized weighted objective minus the Oracle objective. It is
+`objective_regret` is the policy's realized objective minus the Oracle objective. Under a monetized
+objective it has the declared currency unit; under legacy mode it is only an unscaled score. It is
 nonnegative for a single window, where every policy sees the same accepted jobs. In rolling mode,
 the Oracle knows realized signals at each origin but still obeys job `available_at`; a later unknown
 arrival can make another policy's cumulative signed difference negative. Interpret the rolling
-field as an Oracle delta, not a global perfect-foresight regret bound. The unweighted cost,
-emissions, energy, and peak values remain available even when a joint objective is used. A
-cost-plus-carbon objective is a comparison score—not a currency amount—unless `carbon_weight` is
-zero; its weights encode the user's chosen trade-off between unlike quantities.
+field as an Oracle delta, not a global perfect-foresight regret bound. Cost, estimated location-based
+emissions, energy, and peak remain separately available under every objective.
 `shifted_energy_kwh` is half the job-by-slot L1 distance from the ASAP allocation, so moving one kWh
 from one slot to another counts as one shifted kWh rather than two.
 
@@ -191,7 +202,7 @@ from one slot to another counts as one shifted kWh rather than two.
 `RollingReplayEngine` is receding-horizon orchestration: at each decision origin it selects only
 inputs causally available at that origin, re-solves the complete configured horizon for every
 policy, commits only `rolling.step`, and carries remaining job energy separately for each policy.
-Only committed slots enter aggregate energy, cost, emissions, peak, SLA, shifted-energy, and Oracle
+Only committed slots enter aggregate energy, cost, estimated emissions, peak, SLA, shifted-energy, and Oracle
 regret metrics. This prevents later re-optimization from double-counting planned but uncommitted
 energy.
 
@@ -214,5 +225,5 @@ Realized values are counterfactual settlement inputs, not evidence that a produc
 the same savings.
 
 To compare these replay policies across several complete studies without losing scenario-level
-provenance, use the [replay robustness suite](robustness-suites.md). The suite is orchestration and
+provenance, use the [replay sensitivity/robustness suite](robustness-suites.md). The suite is orchestration and
 aggregation over this kernel; it does not change solver semantics.

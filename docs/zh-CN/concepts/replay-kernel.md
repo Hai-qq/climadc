@@ -1,6 +1,6 @@
 # 工程回放内核
 
-未发布的 v0.2 回放内核把标准工程输入转成带约束的反事实对比。它既可以求解单站点的一个完整决策窗口，也可以反复重算滚动时域，再用事后天气、电价和碳强度结算每个已提交方案；它不会向生产基础设施下发任务。
+v0.3 Alpha 回放内核把标准工程输入转成带约束的反事实对比。它既可以求解单站点的一个完整决策窗口，也可以反复重算滚动时域，再用估算结算天气、电价和碳强度结算每个已提交方案；它不会向生产基础设施下发任务。
 
 ## 已实现内容
 
@@ -11,10 +11,10 @@
 | `asap` | 在最早的合法时段执行已知任务；发生争用时高优先级先执行，作为基线 |
 | `peak` | 最小化预测站点峰值 |
 | `price` | 最小化预测电量费用和配置的需量费用 |
-| `carbon` | 最小化预测运营碳排 |
-| `joint` | 最小化配置权重下的成本—碳排联合目标 |
-| `risk_aware` | 使用声明的温度、电价、碳强度上分位数组合场景，最小化同一个联合目标 |
-| `oracle` | 用事后值最小化同一个联合目标，只作为后见对照 |
+| `carbon` | 最小化预测位置法运营排放 |
+| `joint` | 最小化配置的版本化目标 |
+| `risk_aware` | 使用声明的温度、电价、碳强度上分位数组合场景，最小化该目标 |
+| `oracle` | 用结算输入最小化该目标，只作为后见对照 |
 
 精确 UTC 决策时刻已经知道的任务都是硬约束：每个任务必须守恒其 IT 能量，并满足释放时间、截止时间、单任务最大功率和共享 IT 容量。`available_at` 晚于决策时刻的任务不进入优化，但会计入 `future_jobs`；已经到达的任务绝不会被静默丢弃。
 
@@ -48,8 +48,8 @@ config = ReplayConfig(
     interval=pd.Timedelta(hours=1),
     it_capacity_kw=500.0,
     fixed_it_power_kw=300.0,
-    cost_weight=1.0,
-    carbon_weight=1.0,
+    objective_mode="monetized",
+    carbon_price_currency_per_tco2e=1000.0,
     demand_charge_per_kw=0.0,
 )
 
@@ -67,6 +67,8 @@ print(result.metrics)
 ```
 
 决策时刻必须已经是精确 UTC 的 `pandas.Timestamp`，且时域必须是间隔的整数倍。输入时间戳表示区间起点；只有当区间起点不早于任务释放时间、区间终点不晚于截止时间时，任务才能使用该时段。
+
+研究 YAML 推荐版本化 `objective`：`monetized` 用碳价把 kgCO2e 除以 1000 后换算到币种；`epsilon_constraint` 在声明的决策依据排放/峰值上界下最小化费用；`pareto_analysis` 输出全部固定碳价点且不挑选最好结果，目前只支持单窗口。旧 `cost_weight` / `carbon_weight` 保留原算术但发出弃用警告，其分数是量纲不统一的比较值，不是货币或统一效用。迁移示例见 [v0.3 指南](../../migration-v0.3.md)。
 
 研究运行器通过 `climadc replay` 暴露同一套引擎。在研究 YAML 中加入以下可选字段即可启用阶段 4 的两项能力：
 
@@ -122,18 +124,18 @@ rolling:
 
 研究级 `forecast_metrics` 还包含点预测 MAE，以及配置风险分位数时的上述上分位数诊断；同一 payload 会作为 `replay-metrics.json` 的 `forecast` 字段发布。
 
-滚动结果还包含 `decisions`，记录每个决策点、每种策略的求解状态和已提交能量；`remaining_energy` 保存最终按策略区分的任务状态。调度和剖面中的 `decision_time` 可把每个已提交记录追溯到生成它的预测视图。既有 12 产物契约会记录滚动模式、决策次数、提交间隔和逐决策求解记录。
+滚动结果还包含 `decisions`，记录每个决策点、每种策略的求解状态和已提交能量；`remaining_energy` 保存最终按策略区分的任务状态。调度和剖面中的 `decision_time` 可把每个已提交记录追溯到生成它的预测视图。版本化产物契约会记录滚动模式、决策次数、提交间隔和逐决策求解记录。
 
 结算使用事后站点能耗：
 
 ```text
 facility_energy_kwh = sum_t(actual_pue[t] * total_it_power_kw[t] * interval_hours)
-emissions_kgco2e = sum_t(facility_energy_kwh[t] * actual_carbon_kgco2e_per_kwh[t])
+estimated_location_based_emissions_kgco2e = sum_t(facility_energy_kwh[t] * estimated_settlement_carbon_kgco2e_per_kwh[t])
 energy_charge = sum_t(facility_energy_kwh[t] * actual_energy_price[t])
 demand_charge = actual_peak_kw * demand_charge_per_kw
 ```
 
-`objective_regret` 等于某策略的事后加权目标减去 Oracle 目标。单窗口中各策略面对相同的已接收任务，因此该值非负；滚动模式下 Oracle 在每个决策点知道事后信号，但仍遵守任务的 `available_at`，之后到达的未知任务可能使其他策略的累计有符号差值为负。因此滚动结果应解释为 Oracle 差值，而不是全局完美预见的后悔值下界。即使优化使用联合目标，未加权的费用、碳排、能耗和峰值仍会分别保留。只要 `carbon_weight` 不为零，成本与碳排相加得到的就是比较分数而非货币金额；权重表达用户对两种不同量纲的取舍。`shifted_energy_kwh` 取任务—时段分配相对 ASAP 的 L1 距离的一半，因此把 1 kWh 从一个时段移到另一个时段只计 1 kWh，而不是重复计为 2 kWh。
+`objective_regret` 等于某策略的结算目标减去 Oracle 目标。monetized 模式下单位是声明币种，legacy 模式下只是量纲不统一的分数。单窗口中该值非负；滚动模式下 Oracle 仍遵守任务 `available_at`，未来到达任务可能让累计有符号差值为负，因此它不是全局完美预见下界。费用、估算位置法排放、能耗和峰值始终分别保留。`shifted_energy_kwh` 是任务—时段分配相对 ASAP 的 L1 距离一半。
 
 ## 滚动行为与当前边界
 
@@ -148,4 +150,4 @@ demand_charge = actual_peak_kw * demand_charge_per_kw
 
 回放中的事后值只是反事实结算输入，不能证明生产站点实际取得了同等收益。
 
-如需在多个完整研究之间比较这些策略，同时保留场景级来源，请使用[回放稳健性套件](robustness-suites.md)。套件只在本内核之上做编排与汇总，不改变求解语义。
+如需在多个完整研究之间比较这些策略，同时保留场景级来源，请使用[回放敏感性/稳健性套件](robustness-suites.md)。套件只在本内核之上做编排与汇总，不改变求解语义。

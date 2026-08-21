@@ -22,10 +22,13 @@ _EXPECTED_ARTIFACTS = {
     "leakage-report.json",
     "dataset-card.md",
     "report.html",
+    "run-manifest.json",
+    "environment.json",
+    "checksums.sha256",
 }
 
 
-def test_documented_quickstart_runs_offline_and_publishes_eight_artifacts(
+def test_documented_quickstart_runs_offline_and_publishes_verifiable_v2_artifacts(
     tmp_path: Path,
 ) -> None:
     if os.name == "nt":
@@ -37,8 +40,8 @@ def test_documented_quickstart_runs_offline_and_publishes_eight_artifacts(
 
     script = match.group("script")
     commands = [line for line in script.splitlines() if line.strip()]
-    assert len(commands) == 5
-    assert sum(command.lstrip().startswith("climadc ") for command in commands) == 4
+    assert len(commands) == 6
+    assert sum(command.lstrip().startswith("climadc ") for command in commands) == 5
 
     bash = shutil.which("bash")
     if bash is None:
