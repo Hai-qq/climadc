@@ -10,7 +10,7 @@ claims:
     baseline: legal last-observation persistence on the same eight test timestamps
     code_commit: 52bd90e0ab27b0e77238fd16286be1b408df36fb
     code_dirty: false
-    config_sha256: 771587091aad0411fc4e48ebf72cf52efa6f9f9ea9d1fe41f08a208cdb349177
+    config_sha256: d11238394b28ead2fcca0fcad3fae61f98a21993f55a0dffcdf49e8f6b40a41c
     input_hashes:
       climate: bf134a50214574105fe34ad9107961b005a011eb2f1824c9ac3a42433fb680e0
       telemetry: 03ba2213f1ad89c2e3410fdac43c33426fe59b0979ae316e3b35f3aba42a6e24

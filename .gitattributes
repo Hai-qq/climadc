@@ -1,3 +1,6 @@
 # These packaged inputs are SHA-256-bound and must remain byte-identical on every checkout.
 src/climadc/reference/fixtures/gb_london_24h/*.csv text eol=lf
 src/climadc/reference/fixtures/gb_london_24h/*.yaml text eol=lf
+benchmarks/weatherdc.yaml text eol=lf
+benchmarks/reference/gb_london_24h/*.csv text eol=lf
+benchmarks/reference/gb_london_24h/*.json text eol=lf

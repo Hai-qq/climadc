@@ -13,6 +13,8 @@ python benchmarks/reference/gb_london_24h/reproduce.py --check
 
 精简 golden summary 与容差理由位于 `benchmarks/reference/gb_london_24h/`；README 的定量权衡
 语句绑定到 `evidence/claims.yaml` 中的 `E1-LONDON-TRADEOFF-001`。
+被字节级摘要引用的配置与精简 golden 产物通过 `.gitattributes` 固定为 LF；SHA-256 覆盖这些
+准确的 UTF-8 字节。跨平台重现只允许已记录的数值容差，注册表摘要仍精确标识仓库内产物。
 
 | 输入 | 决策用途 | 结算用途 | 边界 |
 |---|---|---|---|

@@ -59,6 +59,11 @@ the clean source revision used for reproduction, while `code_dirty` records whet
 from a modified tree. The registry update necessarily follows its referenced source revision: a Git
 commit cannot contain its own final hash.
 
+Checked-in configurations and compact golden outputs that are referenced by byte-level digests are
+LF-normalized through `.gitattributes`; their SHA-256 values cover those exact UTF-8 bytes. A golden
+reproduction check may accept only its explicitly recorded numeric tolerance for cross-platform
+solver noise, while the registry digest continues to identify the exact stored artifact.
+
 Claims must be removed or marked `deprecated` when their wording no longer matches their evidence.
 Changing a metric, fixture, objective, source, or hash requires regenerating the output and updating
 the registry in the same change.

@@ -17,6 +17,21 @@ ROOT = Path(__file__).resolve().parents[2]
 GOLDEN = ROOT / "benchmarks" / "reference" / "gb_london_24h" / "summary.json"
 
 
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "benchmarks/weatherdc.yaml",
+        "benchmarks/reference/gb_london_24h/summary.json",
+        "benchmarks/reference/gb_london_24h/summary.csv",
+    ],
+)
+def test_byte_bound_repository_evidence_uses_lf(relative_path: str) -> None:
+    payload = (ROOT / relative_path).read_bytes()
+
+    assert payload.endswith(b"\n")
+    assert b"\r\n" not in payload
+
+
 def test_claim_registry_is_strict_and_london_claim_matches_golden() -> None:
     registry = ClaimRegistry.from_yaml(ROOT / "evidence" / "claims.yaml")
     golden = json.loads(GOLDEN.read_text(encoding="utf-8"))
@@ -78,9 +93,13 @@ def test_golden_comparators_enforce_declared_tolerance() -> None:
     )
     json_equivalent = namespace["_json_equivalent"]
     csv_equivalent = namespace["_csv_equivalent"]
+    first_difference = namespace["_first_difference"]
 
     assert json_equivalent('{"metric": 1.0}', '{"metric": 1.000000005}')
     assert not json_equivalent('{"metric": 1.0}', '{"metric": 1.00000002}')
     assert not json_equivalent('{"metric": 1.0}', '{"different": 1.0}')
     assert csv_equivalent("policy,metric\nasap,1.0\n", "policy,metric\nasap,1.000000005\n")
     assert not csv_equivalent("policy,metric\nasap,1.0\n", "policy,metric\nasap,1.00000002\n")
+    assert first_difference({"metric": 1.0}, {"metric": 1.00000002}).startswith(
+        "$.metric: expected 1.0, generated 1.00000002, absolute difference "
+    )
