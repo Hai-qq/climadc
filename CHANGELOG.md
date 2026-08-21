@@ -31,6 +31,11 @@ The project follows [Semantic Versioning](https://semver.org/). Alpha APIs may c
   and non-yanked SciPy 1.11.4 rather than broken or withdrawn initial releases.
 - The compact golden check now applies its declared absolute tolerance semantically across JSON
   and CSV, while continuing to reject schema, row-order, and non-numeric changes.
+- Equivalent HiGHS solutions now keep the primary aggregate slot power fixed and use the documented
+  ASAP order to select one job allocation, making job-level schedules and `shifted_energy_kwh`
+  reproducible across platforms without changing energy, cost, emissions, or peak results.
+- Repository configurations, compact golden outputs, and source files referenced by byte-level
+  claim hashes now use enforced LF checkout semantics on Windows, macOS, and Linux.
 - The Typer floor is raised to the vendored-Click generation, avoiding unsupported combinations
   between historical Typer releases and current Click while retaining Python 3.10 support.
 - National-average carbon settlement is named estimated location-based emissions throughout the
