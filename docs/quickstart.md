@@ -4,7 +4,7 @@
 
 - Python 3.10, 3.11, 3.12, or 3.13.
 - Bash or Zsh for the tested six-line block. Windows users can use the PowerShell equivalent below.
-- An installed checkout: `python -m pip install -e .`. After an authorized Alpha release, the equivalent version is `climadc==0.3.0a1`.
+- The published Alpha (`python -m pip install "climadc==0.3.0a1"`) or an installed checkout (`python -m pip install -e .`).
 
 The built-in study is deterministic, project-owned synthetic data. It needs no API key or network access.
 
@@ -59,7 +59,7 @@ accuracy or savings.
 
 ## Engineering replay demo
 
-The v0.3 development checkout also ships a hash-verified Great Britain reference replay. It uses a
+The v0.3 Alpha also ships a hash-verified Great Britain reference replay. It uses a
 checked-in Open-Meteo/NESO-derived snapshot plus a declared tariff, workload, and PUE model, so the
 command is fully offline:
 

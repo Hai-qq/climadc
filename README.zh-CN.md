@@ -9,8 +9,9 @@ Dashboard 或大型模型仓库。
 
 ## 快速开始
 
-v0.3 Alpha 支持 Python 3.10–3.13。从源码检出安装：`python -m pip install -e .`；经授权
-发布后的包版本将是 `climadc==0.3.0a1`。
+v0.3 Alpha 支持 Python 3.10–3.13。安装已发布的 Alpha：
+`python -m pip install "climadc==0.3.0a1"`；也可以从源码检出安装：
+`python -m pip install -e .`。
 
 ```bash
 export CLIMADC_STUDY="$(mktemp -d)/climadc-quickstart"
@@ -103,5 +104,4 @@ Prometheus/Kepler、Carbon Aware SDK 兼容与 SustainDC 路径都不会部署�
 [API 稳定性](docs/api-stability.md)与[路线图](ROADMAP.md)。
 
 ClimaDC 代码采用 Apache-2.0，上游数据与服务保留各自条款。软件引用版本为
-`0.3.0-alpha.1`（PEP 440：`0.3.0a1`），见 [CITATION.cff](CITATION.cff)。本次变更不会发布
-PyPI 或 GitHub Release。
+`0.3.0-alpha.1`（PEP 440：`0.3.0a1`），见 [CITATION.cff](CITATION.cff)。

@@ -16,7 +16,7 @@ flowchart LR
 
 从[可独立验证的快速开始](quickstart.md)入门，再阅读 [`issue_time` / `available_at` / `valid_time` 指南](concepts/time-semantics.md)。WeatherDC 示例严格区分完全离线的合成 Benchmark 与经过校验的上游数据转换模式。
 
-v0.3 开发版本新增[独立产物验证](../evidence-model.md)、[E0–E3 证据等级](../benchmark-evidence-levels.md)、量纲明确的目标函数、[敏感性/稳健性套件语义](concepts/robustness-suites.md)、精简可生成的[英国 E1 参考回放](concepts/reference-replay.md)及只读来源适配器。当前证据只达到 E0 与 E1。
+v0.3 Alpha 新增[独立产物验证](../evidence-model.md)、[E0–E3 证据等级](../benchmark-evidence-levels.md)、量纲明确的目标函数、[敏感性/稳健性套件语义](concepts/robustness-suites.md)、精简可生成的[英国 E1 参考回放](concepts/reference-replay.md)及只读来源适配器。当前证据只达到 E0 与 E1。
 
 ## 当前边界
 
