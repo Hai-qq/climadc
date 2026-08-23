@@ -1,8 +1,8 @@
 # Maintainers
 
-| GitHub account | Role | Scope |
+| Maintainer | Role | Scope |
 |---|---|---|
-| [`@Hai-qq`](https://github.com/Hai-qq) | Maintainer | Repository review and release decisions |
+| Gao Qing ([`@Hai-qq`](https://github.com/Hai-qq)) | Maintainer | Repository review and release decisions |
 
-The repository does not currently contain verified personal name, ORCID, or affiliation details.
-Those fields remain TODO in `CITATION.cff` until the maintainer supplies them.
+The maintainer supplied the personal name shown above. ORCID and affiliation remain TODO in
+`CITATION.cff` until the maintainer supplies them; they are never inferred.
