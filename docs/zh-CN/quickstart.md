@@ -4,7 +4,7 @@
 
 - Python 3.10、3.11、3.12 或 3.13。
 - 下方六行路径需要 Bash 或 Zsh；Windows 用户可使用 PowerShell 版本。
-- 先安装源码检出：`python -m pip install -e .`。经授权发布后，等价版本为 `climadc==0.3.0a1`。
+- 安装已发布的 Alpha（`python -m pip install "climadc==0.3.0a1"`）或源码检出（`python -m pip install -e .`）。
 
 内置研究使用确定性、项目自有的合成数据，不需要 API Key 或网络连接。
 
@@ -41,7 +41,7 @@ Benchmark payload 包含 `run.yaml`、`lineage.json`、`splits.parquet`、`predi
 
 ## 工程回放演示
 
-v0.3 开发版本还打包了带哈希校验的英国参考回放。它使用仓库内 Open-Meteo/NESO 衍生快照，以及明确声明的 UTC 电价、负载和 PUE 模型，因此运行过程完全离线：
+v0.3 Alpha 还打包了带哈希校验的英国参考回放。它使用仓库内 Open-Meteo/NESO 衍生快照，以及明确声明的 UTC 电价、负载和 PUE 模型，因此运行过程完全离线：
 
 ```bash
 climadc demo carbon-shift --output-dir ./climadc-replay-runs
