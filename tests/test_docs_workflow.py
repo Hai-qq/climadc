@@ -19,7 +19,7 @@ def test_docs_workflow_builds_on_pr_and_deploys_only_after_main_push() -> None:
         step
         for step in build_steps
         if step.get("uses")
-        == "actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b"
+        == "actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9"
     )
     assert upload["if"] == "github.event_name == 'push'"
     assert upload["with"]["path"] == "site"
@@ -30,6 +30,6 @@ def test_docs_workflow_builds_on_pr_and_deploys_only_after_main_push() -> None:
     assert deploy["environment"]["name"] == "github-pages"
     assert deploy["permissions"] == {"pages": "write", "id-token": "write"}
     assert any(
-        step.get("uses") == "actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e"
+        step.get("uses") == "actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128"
         for step in deploy["steps"]
     )
