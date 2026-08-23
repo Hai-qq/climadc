@@ -9,7 +9,7 @@ description = "Climate-aware forecasting and benchmarking for data centers"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
-authors = [{name = "Hai-qq"}]
+authors = [{name = "Gao Qing"}]
 dependencies = [
   "jinja2>=3.1.6,<4",
   "numpy>=1.26,<2.4",
