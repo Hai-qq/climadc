@@ -41,4 +41,10 @@ Tests are expected to run offline by default. Mark a test `network` only when a 
 - Include exact verification commands and results.
 - Keep commits focused and preserve unrelated work.
 
+Changes to `main` are merged through a pull request. The repository ruleset requires the maintained
+CI matrix, CodeQL analysis, dependency review, documentation build, and SBOM generation to pass
+against the latest `main`, and requires review conversations to be resolved. Branch deletion and
+force pushes are blocked. The sole-maintainer emergency bypass is limited to pull requests and
+should be explained in the affected pull request if it is ever used.
+
 By submitting a contribution, you agree that it is licensed under Apache-2.0.
