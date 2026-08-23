@@ -14,6 +14,8 @@ The project follows [Semantic Versioning](https://semver.org/). Alpha APIs may c
   mkdocstrings 1.x; Dependabot excludes the minimum-compatibility constraint file so automated
   updates cannot silently turn the minimum-dependency job into a latest-dependency job. Twine 7
   is required for the Core Metadata 2.5 artifacts emitted by the expanded Hatchling range.
+- CodeQL write permission is scoped to its analysis job, and the reference-adapter URL test now
+  validates the parsed hostname instead of relying on a substring assertion.
 
 ## [0.3.0-alpha.1] - 2026-08-21
 
