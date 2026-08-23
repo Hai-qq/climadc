@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import cast
+from urllib.parse import urlsplit
 
 import pandas as pd
 import pytest
@@ -68,7 +69,7 @@ def test_openmeteo_history_separates_fixed_lead_forecast_and_estimated_actual() 
     actual = result.actual.to_pandas()
     assert len(calls) == 2
     assert "temperature_2m_previous_day1" in calls[0]
-    assert "archive-api.open-meteo.com" in calls[1]
+    assert urlsplit(calls[1]).hostname == "archive-api.open-meteo.com"
     assert len(forecast) == len(actual) == 24
     assert (forecast["issue_time"] == forecast["valid_time"] - pd.Timedelta(hours=24)).all()
     assert set(forecast["available_at"]) == {DECISION}
