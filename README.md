@@ -10,9 +10,9 @@ twin, monitoring dashboard, or model repository.
 
 ## Quickstart
 
-ClimaDC v0.3 Alpha supports Python 3.10–3.13. Install a checkout with
-`python -m pip install -e .`; after an authorized release, the equivalent package version will be
-`climadc==0.3.0a1`.
+ClimaDC v0.3 Alpha supports Python 3.10–3.13. Install the published Alpha with
+`python -m pip install "climadc==0.3.0a1"`, or install a checkout with
+`python -m pip install -e .`.
 
 ```bash
 export CLIMADC_STUDY="$(mktemp -d)/climadc-quickstart"
@@ -135,5 +135,4 @@ validation. Those remain `DATA_REQUIRED`, with gates documented in
   [support](SUPPORT.md)
 
 ClimaDC uses Apache-2.0. Upstream data and services retain their own terms. The software citation
-version is `0.3.0-alpha.1` (PEP 440: `0.3.0a1`); see [CITATION.cff](CITATION.cff). No PyPI or GitHub
-release is performed by this change.
+version is `0.3.0-alpha.1` (PEP 440: `0.3.0a1`); see [CITATION.cff](CITATION.cff).
