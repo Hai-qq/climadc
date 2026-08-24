@@ -5,6 +5,10 @@ import pandas as pd
 import typer
 
 from climadc import __version__
+from climadc.adapters.google_clusterdata import (
+    convert_google_v3_export,
+    verify_google_v3_conversion,
+)
 from climadc.benchmark import BenchmarkRunner
 from climadc.cli.scaffold import scaffold_study
 from climadc.config import StudyConfig
@@ -24,7 +28,9 @@ from climadc.reporting import ArtifactWriter, resolve_run_path
 
 app = typer.Typer(no_args_is_help=True)
 demo_app = typer.Typer(no_args_is_help=True)
+trace_app = typer.Typer(no_args_is_help=True)
 app.add_typer(demo_app, name="demo")
+app.add_typer(trace_app, name="trace")
 
 
 def version_callback(value: bool) -> None:
@@ -187,6 +193,45 @@ def demo_refresh_carbon_shift(
     except ClimaDCError as exc:
         _user_error(exc)
     typer.echo(str(config_path.resolve()))
+
+
+@trace_app.command("convert-google-v3")
+def trace_convert_google_v3(
+    source_csv: Path,
+    config_path: Path,
+    output_directory: Path,
+    query_sql: Annotated[Path, typer.Option("--query-sql")],
+) -> None:
+    """Convert a hash-bound Google ClusterData2019 task export offline."""
+
+    try:
+        result = convert_google_v3_export(
+            source_csv=source_csv,
+            config_path=config_path,
+            query_sql=query_sql,
+            output_directory=output_directory,
+        )
+    except ClimaDCError as exc:
+        _user_error(exc)
+    typer.echo(str(result.output_directory))
+
+
+@trace_app.command("verify-google-v3")
+def trace_verify_google_v3(
+    conversion_directory: Path,
+    source_csv: Annotated[Optional[Path], typer.Option("--source-csv")] = None,
+) -> None:
+    """Verify a Google v3 conversion, optionally reproducing it from source."""
+
+    try:
+        result = verify_google_v3_conversion(
+            conversion_directory,
+            source_csv=source_csv,
+        )
+    except ClimaDCError as exc:
+        _user_error(exc)
+    source_state = "verified" if result.source_verified else "not supplied"
+    typer.echo(f"VALID: google-v3 conversion rows={result.rows}; source={source_state}")
 
 
 @app.command()

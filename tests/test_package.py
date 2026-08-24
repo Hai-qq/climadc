@@ -3,11 +3,16 @@ from typer.testing import CliRunner
 import climadc
 from climadc.adapters import (
     CarbonAwareSDKAdapter,
+    GoogleV3ConversionConfig,
+    GoogleV3ConversionResult,
+    GoogleV3ConversionVerification,
     KeplerPrometheusAdapter,
     PrometheusRangeAdapter,
     SustainDCAdapter,
+    convert_google_v3_export,
     read_flexible_workload,
     read_grid_signals,
+    verify_google_v3_conversion,
 )
 from climadc.cli.app import app
 from climadc.contracts import FlexibleWorkloadFrame, GridSignalFrame
@@ -64,3 +69,8 @@ def test_v02_engineering_apis_are_exported_from_public_packages() -> None:
     assert KeplerPrometheusAdapter.__name__ == "KeplerPrometheusAdapter"
     assert CarbonAwareSDKAdapter.__name__ == "CarbonAwareSDKAdapter"
     assert SustainDCAdapter.__name__ == "SustainDCAdapter"
+    assert GoogleV3ConversionConfig.__name__ == "GoogleV3ConversionConfig"
+    assert GoogleV3ConversionResult.__name__ == "GoogleV3ConversionResult"
+    assert GoogleV3ConversionVerification.__name__ == "GoogleV3ConversionVerification"
+    assert callable(convert_google_v3_export)
+    assert callable(verify_google_v3_conversion)
