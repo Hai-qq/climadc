@@ -82,6 +82,23 @@ Fresh network refreshes preserve exact response bytes under `raw/` and record sa
 parser, license, and raw→canonical hashes. The historical checked-in fixture predates raw capture;
 ClimaDC does not fabricate missing provider bytes.
 
+### Benchmark v1 — conversion foundation, no E2 result
+
+An offline, hash-bound converter now accepts a user-exported bounded Google ClusterData2019 v3
+task slice:
+
+```bash
+climadc trace convert-google-v3 google-v3-a.csv conversion.yaml google-v3-a-conversion \
+  --query-sql executed-export.sql
+climadc trace verify-google-v3 google-v3-a-conversion --source-csv google-v3-a.csv
+```
+
+The repository contains only the reviewed SQL/config templates, converter, verifier, and synthetic
+unit tests—no Google trace rows or E2 metrics. Deadline, power, timeline, and preemptibility
+mappings remain explicit assumptions; observed finish time is marked as a future fact used during
+ex-post scenario construction. See the
+[trace-driven benchmark guide](docs/concepts/trace-driven-benchmarks.md).
+
 ## Replay objectives and sensitivity analysis
 
 The preferred versioned objective is dimensionally explicit:
@@ -130,6 +147,7 @@ validation. Those remain `DATA_REQUIRED`, with gates documented in
 - [Replay kernel and objective migration](docs/concepts/replay-kernel.md)
 - [Sensitivity suites](docs/concepts/robustness-suites.md)
 - [London reference replay](docs/concepts/reference-replay.md)
+- [Trace-driven benchmark preparation](docs/concepts/trace-driven-benchmarks.md)
 - [API stability](docs/api-stability.md) and [API reference](docs/api/index.md)
 - [Roadmap](ROADMAP.md), [governance](GOVERNANCE.md), [maintainers](MAINTAINERS.md), and
   [support](SUPPORT.md)

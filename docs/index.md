@@ -16,7 +16,7 @@ flowchart LR
 
 Start with the [independently verified Quickstart](quickstart.md), then read the [`issue_time` / `available_at` / `valid_time` guide](concepts/time-semantics.md). The [WeatherDC example](https://github.com/Hai-qq/climadc/tree/main/examples/weatherdc_kasetsart) separates a fully offline synthetic benchmark from verified upstream conversion-only mode.
 
-The v0.3 Alpha adds [independent artifact verification](evidence-model.md), [E0–E3 evidence levels](benchmark-evidence-levels.md), dimensionally explicit objectives, [sensitivity/robustness suite semantics](concepts/robustness-suites.md), a compact generated [Great Britain E1 reference replay](concepts/reference-replay.md), and read-only source adapters. Current evidence reaches E0 and E1 only.
+The v0.3 Alpha adds [independent artifact verification](evidence-model.md), [E0–E3 evidence levels](benchmark-evidence-levels.md), dimensionally explicit objectives, [sensitivity/robustness suite semantics](concepts/robustness-suites.md), a compact generated [Great Britain E1 reference replay](concepts/reference-replay.md), and read-only source adapters. [Trace-driven benchmark preparation](concepts/trace-driven-benchmarks.md) now includes an auditable Google v3 conversion path, but current evidence still reaches E0 and E1 only.
 
 ## Current boundary
 

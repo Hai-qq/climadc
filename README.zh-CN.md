@@ -75,6 +75,20 @@ python benchmarks/reference/gb_london_24h/reproduce.py --check
 新的网络刷新会在解析前保存 `raw/` 原始响应字节，并记录安全请求字段、HTTP 状态、解析器、
 许可和 raw→canonical 哈希。仓库内历史 fixture 早于该契约，缺失的原始响应不会被伪造。
 
+### Benchmark v1 — 转换基础设施，不是 E2 结果
+
+新增离线、哈希绑定的转换器，用于用户自行导出的有界 Google ClusterData2019 v3 任务切片：
+
+```bash
+climadc trace convert-google-v3 google-v3-a.csv conversion.yaml google-v3-a-conversion \
+  --query-sql executed-export.sql
+climadc trace verify-google-v3 google-v3-a-conversion --source-csv google-v3-a.csv
+```
+
+仓库只包含经审查的 SQL/配置模板、转换器、验证器和合成单元测试；不包含 Google 轨迹行或
+E2 指标。deadline、功率、时间线和可抢占性仍是显式假设，观测 finish 也会标记为仅用于
+事后场景构造的未来事实。详见[轨迹驱动 Benchmark 准备](docs/zh-CN/concepts/trace-driven-benchmarks.md)。
+
 ## 目标函数与敏感性分析
 
 推荐使用版本化、量纲明确的 `monetized`、`epsilon_constraint` 或 `pareto_analysis` 目标。
@@ -101,6 +115,7 @@ Prometheus/Kepler、Carbon Aware SDK 兼容与 SustainDC 路径都不会部署�
 当前没有 E2 trace-driven causal benchmark 或 E3 同站点运营验证；它们仍是
 `DATA_REQUIRED`。参阅[快速开始](docs/zh-CN/quickstart.md)、[回放内核](docs/zh-CN/concepts/replay-kernel.md)、
 [敏感性套件](docs/zh-CN/concepts/robustness-suites.md)、[参考回放](docs/zh-CN/concepts/reference-replay.md)、
+[轨迹驱动 Benchmark 准备](docs/zh-CN/concepts/trace-driven-benchmarks.md)、
 [API 稳定性](docs/api-stability.md)与[路线图](ROADMAP.md)。
 
 ClimaDC 代码采用 Apache-2.0，上游数据与服务保留各自条款。软件引用版本为

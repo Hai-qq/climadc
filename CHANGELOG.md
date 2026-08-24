@@ -6,6 +6,12 @@ The project follows [Semantic Versioning](https://semver.org/). Alpha APIs may c
 
 ## [Unreleased]
 
+### Added
+
+- Offline, hash-bound conversion and independent verification for user-exported bounded Google
+  ClusterData2019 v3 task slices, with reviewed SQL/config templates and explicit
+  `DATA_REQUIRED`/future-information boundaries. No trace data or E2 result is bundled.
+
 ### Changed
 
 - Citation, package, maintainer, and NOTICE metadata now use the maintainer-supplied name Gao Qing;
