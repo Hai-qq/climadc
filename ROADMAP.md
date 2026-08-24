@@ -18,6 +18,12 @@ historically valid forecast vintages, causal availability facts, independent eva
 documented deadline/slack/preemptibility/power mappings. Google Borg or Alibaba Cluster Trace may
 be supported as foreign workload traces; neither may be described as same-site London history.
 
+Current foundation: a bounded Google ClusterData2019 v3 CSV converter and independent verifier are
+implemented. They bind source bytes, exact export SQL, mapping config, canonical workload, and
+artifact membership. No public trace export has been acquired, no forecast-vintage capture has run,
+and no E2 replay or claim exists. The remaining gates are tracked in the
+[trace-driven benchmark guide](docs/concepts/trace-driven-benchmarks.md).
+
 ## Operational validation — DATA_REQUIRED
 
 E3 requires permissioned same-site, same-period telemetry and workload/control logs, measured data

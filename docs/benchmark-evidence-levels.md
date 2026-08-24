@@ -22,6 +22,10 @@ mapping assumptions, independent evaluation slices, and the complete v2 verifier
 Borg or Alibaba Cluster Trace may supply workload traces, but neither becomes a same-site history
 when combined with unrelated UK grid/weather data.
 
+The Google ClusterData2019 converter covers only the trace-conversion and provenance portion of
+that gate. Its manifests remain `DATA_REQUIRED` and claim-ineligible; see
+[trace-driven benchmark preparation](concepts/trace-driven-benchmarks.md).
+
 E3 additionally needs permissioned same-site telemetry and workload records, measured data quality,
 documented interventions or a credible counterfactual design, operational safety review, and an
 analysis plan fixed before outcome selection. No current repository artifact meets those gates.

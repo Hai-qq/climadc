@@ -1,0 +1,29 @@
+schema_version: "1"
+dataset: google-clusterdata-2019-v3
+cell: a
+site_id: google-borg-cell-a-scenario
+# Replace this with the UTC time at which the CSV export completed.
+exported_at: 2026-08-24T00:00:00Z
+# Placeholder only: replace with SHA-256 of the exact exported CSV bytes.
+input_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+# Scenario time assigned to relative trace time zero; this is not a Google timestamp.
+scenario_epoch: 2030-01-01T00:00:00Z
+trace_window:
+  start_time_us: 0
+  end_time_us: 86400000000
+  finish_cutoff_time_us: 172800000000
+allowed_scheduling_classes:
+  - 0
+  - 1
+power_mapping:
+  kind: requested_cpu_linear
+  # Scenario assumption, not measured Google facility power. Replace and sensitivity-test it.
+  kw_per_normalized_cpu: 1.0
+  utilization_fraction: 1.0
+deadline_mapping:
+  kind: observed_runtime_multiplier
+  # Uses future trace completion during scenario construction; see the evidence boundary docs.
+  multiplier: 2.0
+preemptibility_mapping:
+  kind: assume_preemptible
+  value: true

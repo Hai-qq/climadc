@@ -12,3 +12,8 @@ the supported read-only predecessor.
 Legacy objective fields remain readable in v0.3 with a `DeprecationWarning`; their arithmetic is not
 changed. The deprecated `demo robustness-suite` alias remains during the Alpha migration window.
 Removal requires a later changelog entry and at least one prior release carrying the warning.
+
+The additive `climadc trace convert-google-v3` and `verify-google-v3` commands, and the documented
+`climadc.adapters.google_clusterdata` names, enter the public Alpha surface in the next release.
+Conversion artifact schema `1` is independently verified but is separate from replay artifact
+schema v2; neither version implies an E2 evidence result.

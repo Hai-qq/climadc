@@ -38,3 +38,15 @@ The documented modules below are the supported v0.3 Alpha extension and verifica
         - ReplayResult
         - ReplayEngine
         - replay_policy_names
+
+## Google ClusterData2019 conversion
+
+::: climadc.adapters.google_clusterdata
+    options:
+      show_root_heading: true
+      members:
+        - GoogleV3ConversionConfig
+        - GoogleV3ConversionResult
+        - GoogleV3ConversionVerification
+        - convert_google_v3_export
+        - verify_google_v3_conversion
